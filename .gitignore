@@ -1,0 +1,20 @@
+# My .gitignore file types
+*.docx
+*.txt
+*.pptx
+*.xlsx
+*.png
+/writing/*
+/images/*
+/notebooks/*
+/figures/*
+/networks/*
+/data/*
+/paraview/*
+scripts/__pycache__
+scripts/mypnmlib/models/__pycache__
+scripts/mypnmlib/models/__pycache__
+scripts/mypnmlib/network/__pycache__
+scripts/mypnmlib/__pycache__
+scripts/mypnmlib/generators/__pycache__
+scripts/mypnmlib/simulations/__pycache__
