@@ -382,3 +382,15 @@ plt.legend(loc='upper center', bbox_to_anchor=(0.5, -0.07), ncol=3, fontsize=16,
 plt.tight_layout()
 plt.savefig('../figures/unperforated_network_permeabilities.png')
 plt.show()
+
+#%% Export
+
+# export to paraview
+net_s["pore.invasion_sequence"] = alg_s["pore.invasion_sequence"]
+net_s["throat.invasion_sequence"] = alg_s["throat.invasion_sequence"]
+net_s["throat.radius"] = net_s["throat.diameter"]/2
+op.io.project_to_xdmf(project=net_s.project,
+                      filename="../paraview/scale_network_1a")
+
+# export to .npz file
+np.savez_compressed("../networks/scale_network_1a.npz", **net_s)
