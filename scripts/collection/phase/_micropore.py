@@ -19,6 +19,5 @@ micropore = {
     "throat.viscosity": {
         "model": mods.misc.constant,
         "value": 1e32,
-    },   
+    },
 }
-

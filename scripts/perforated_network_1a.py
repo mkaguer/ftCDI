@@ -41,7 +41,7 @@ net = network.my_bcc(shape, spacing)
 
 # add pore diameters
 net["pore.diameter@macropore"] = Dp
-net["pore.diameter@micropore"] = 1e-32
+net["pore.diameter@micropore"] = 1e-16  # can't be 1e-32!
 
 # assign throat diameters
 net["throat.diameter@macropore"] = Dt
