@@ -9,45 +9,42 @@ import time
 
 # create network
 spacing = 1e-5
-coords = np.array([[0.5, 1.5, 0.5],
-                   [1.5, 1.5, 0.5],
-                   [2.5, 1.5, 0.5],
-                   [0.5, 0.5, 0.5],
-                   [1.5, 0.5, 0.5],
-                   [2.5, 0.5, 0.5],
-                   [1.0, 1.0, 0.5],
-                   [2.0, 1.0, 0.5]]) * spacing
-conns = np.array([[0, 1],
-                  [0, 3],
-                  [0, 6],
-                  [1, 2],
-                  [1, 4],
-                  [1, 6],
-                  [1, 7],
-                  [2, 5],
-                  [2, 7],
-                  [3, 4],
-                  [3, 6],
-                  [4, 5],
-                  [4, 6],
-                  [4, 7],
-                  [5, 7]])
-net = op.network.Network(coords=coords, conns=conns)
-# net = op.network.BodyCenteredCubic(shape=[3, 2], spacing=1e-5)
+start = time.time()
+net = op.network.BodyCenteredCubic(shape=[11, 10, 10], spacing=spacing)
+stop = time.time()
+print(f"Time to build network: {stop - start}s")
 
-# set pore labels
-net.set_label(label="micropore", pores=[6, 7])
-net["pore.macropore"] = ~net["pore.micropore"]
-net["pore.cathode"] = net["pore.coords"][:, 0] < 1.5*spacing
-net["pore.separator"] = net["pore.coords"][:, 0] == 1.5*spacing
-net["pore.anode"] = net["pore.coords"][:, 0] > 1.5*spacing
+# this code below is good for 2d!
+# shift z-axis of body pores
+# mask = net["pore.body"]
+# net["pore.coords"][:, 2] -= spacing/2 * mask
 
-# set throat labels
-throats = net.find_neighbor_throats(pores=net.pores("macropore"), mode='xnor')
-net.set_label(label='macropore', throats=throats)
-net["throat.micropore"] = ~net["throat.macropore"]
+# delete corner to corner throats
+op.topotools.trim(net, throats=net.throats("body_to_body"))
 
-print(net)
+# label micropores
+net.set_label(label="micropore",
+              pores=net.pores("body"),
+              throats=net.throats("corner_to_body"))
+
+# label macropores
+net.set_label(label="macropore",
+              pores=net.pores("corner"),
+              throats=net.throats("corner_to_corner"))
+
+# label anode, cathode, seperator
+x = net["pore.coords"][:, 0]
+x_sep = np.round((np.max(x) - np.min(x))/2 + np.min(x), 10)
+net["pore.cathode"] = x < x_sep
+net["pore.anode"] = x > x_sep
+net["pore.separator"] = np.isclose(x, x_sep)
+
+# trim old labels
+del net["pore.corner"], net["pore.body"]
+del net["throat.corner_to_corner"]
+del net["throat.corner_to_body"]
+del net["throat.body_to_body"]
+
 
 # add geometry to macropore
 net["pore.diameter@macropore"] = 0.5*spacing
@@ -57,7 +54,7 @@ net.add_model_collection(models=geo_mods, domain="macropore")
 
 # add geometry to micropores
 net["pore.diameter@micropore"] = 0.25*spacing
-del geo_mods["throat.volume"]  # delete so doesn't get added to eff macropore vol
+del geo_mods["throat.volume"]  # delete so doesn't get added to eff macro vol
 net.add_model_collection(models=geo_mods, domain="micropore")
 
 # regenerate models
@@ -67,7 +64,7 @@ net.regenerate_models()
 # calculate effective volume of micropores, this is hard coded!
 Vp = net["pore.volume@macropore"][0]
 Vt = net["throat.volume@macropore"][0]
-net["pore.effective_volume@micropore"] = 0.2*(spacing**3 - Vp - Vt/2*4)  # FIXME: multiply by porosity
+net["pore.effective_volume@micropore"] = 0.2*(spacing**3 - Vp - Vt*2)  # FIXME: multiply by porosity
 eff_vol_mod = op.models.geometry.pore_volume.effective
 net.add_model(propname="pore.effective_volume",
               model=eff_vol_mod,
@@ -157,7 +154,10 @@ b_s = b[mask_s]
 b_t = b[~mask_s]  # FIXME: b changes so we have to get new every time
 
 # conver A to csr
+start = time.time()
 A_csr = A.tocsr()
+stop = time.time()
+print(f"Time to convert to csr: {stop - start}s")
 
 # create masks
 idx_s = np.where(mask_s)[0]  # indices of macropores (steady)
@@ -169,8 +169,11 @@ A_ts = A_csr[idx_t, :][:, idx_s]  # transient-steady
 A_tt = A_csr[idx_t, :][:, idx_t]  # transient-transient
 
 # let's use a preconditioner
+start = time.time()
 ml = pyamg.smoothed_aggregation_solver(A_ss)
 M = ml.aspreconditioner()
+stop = time.time()
+print(f"Preconditioner Time: {stop - start}s")
 
 
 def solve_ss(rhs):
@@ -212,7 +215,7 @@ def rhs_charge(t, x):
 # perform time stepping
 t0 = 0
 dt = dt
-tf = 1
+tf = 0.01
 for t in np.arange(t0 + dt, tf+dt, dt):
     print(f"Simulation time: {t}s")
     # get phi0
