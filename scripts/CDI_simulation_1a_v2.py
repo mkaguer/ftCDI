@@ -6,45 +6,62 @@ from scipy.integrate import solve_ivp
 from scipy.sparse.linalg import cg, LinearOperator
 import pyamg
 import time
+import network
 
-# create network
-spacing = 1e-5
-start = time.time()
-net = op.network.BodyCenteredCubic(shape=[11, 10, 10], spacing=spacing)
-stop = time.time()
-print(f"Time to build network: {stop - start}s")
+# set dimensions
+l_sep = 8e-5  # should be 190um (Guyes)
+d = 5e-5
 
-# this code below is good for 2d!
-# shift z-axis of body pores
-# mask = net["pore.body"]
-# net["pore.coords"][:, 2] -= spacing/2 * mask
+# load network
+data = np.load('../networks/perforated_network_1a.npz')
+data = {key: np.array(data[key]) for key in data.files}
 
-# delete corner to corner throats
-op.topotools.trim(net, throats=net.throats("body_to_body"))
+# convert to openpnm object
+net = op.io.network_from_porespy(data)
 
-# label micropores
-net.set_label(label="micropore",
-              pores=net.pores("body"),
-              throats=net.throats("corner_to_body"))
+# infer spacing
+conns = net["throat.conns"]
+coords = net["pore.coords"]
+spacing = np.max(np.abs(coords[conns[0, 0]] - coords[conns[0, 1]]))
+spacing = np.round(spacing, 10)
 
-# label macropores
-net.set_label(label="macropore",
-              pores=net.pores("corner"),
-              throats=net.throats("corner_to_corner"))
+# create full cell
+net = network.create_full_cell(net, l_separator=l_sep)
 
-# label anode, cathode, seperator
-x = net["pore.coords"][:, 0]
-x_sep = np.round((np.max(x) - np.min(x))/2 + np.min(x), 10)
-net["pore.cathode"] = x < x_sep
-net["pore.anode"] = x > x_sep
-net["pore.separator"] = np.isclose(x, x_sep)
+# set pore/throat diameter of separator
+net["pore.diameter@separator"] = d
+net["throat.diameter@separator"] = d
 
-# trim old labels
-del net["pore.corner"], net["pore.body"]
-del net["throat.corner_to_corner"]
-del net["throat.corner_to_body"]
-del net["throat.body_to_body"]
+# re-label perforated throats connected to a macropore as "macropore"
+throats = op.topotools.find_interface_throats(net,
+                                              P1=net.pores("macropore"),
+                                              P2=net.pores("perforated"))
+net["throat.perforated"][throats] = False
+net["throat.macropore"][throats] = True
+ts = np.zeros(net.Nt).astype(bool)
 
+# re-label separator throats as macropore
+throats = net["throat.separator"]
+net["throat.macropore"][throats] = True
+
+# re-label separator pores as macropore pores
+pores = net["pore.separator"]
+net["pore.macropore"][pores] = True
+
+# re-label perforated pores as macropore pores
+pores = net["pore.perforated"]
+net["pore.macropore"][pores] = True
+
+# re-label perforated throats as macropore throats
+throats = net["throat.perforated"]
+net["throat.macropore"][throats] = True
+
+# delete unecessary labels
+del net["throat.separator"]
+del net["pore.perforated"]
+del net["throat.perforated"]
+
+print(net)
 
 # add geometry to macropore
 net["pore.diameter@macropore"] = 0.5*spacing
@@ -65,6 +82,7 @@ net.regenerate_models()
 Vp = net["pore.volume@macropore"][0]
 Vt = net["throat.volume@macropore"][0]
 net["pore.effective_volume@micropore"] = 0.2*(spacing**3 - Vp - Vt*2)  # FIXME: multiply by porosity
+net["throat.volume@micropore"] = 0
 eff_vol_mod = op.models.geometry.pore_volume.effective
 net.add_model(propname="pore.effective_volume",
               model=eff_vol_mod,
