@@ -9,6 +9,8 @@ import pyamg
 import time
 import network
 import models
+import algorithms
+import matplotlib.pyplot as plt
 
 op.visualization.set_mpl_style()
 
@@ -175,15 +177,38 @@ phase["pore.surface_area@micropore"] = 1
 phase["pore.surface_area@separator"] = 1
 phase["pore.surface_area@perforated"] = 1
 
-# add donnan potential model
-phase["pore.donnan_potential_old"] = np.zeros(net.Np)  # guess
-phase.add_model(propname="pore.donnan_potential",
-                model=mods.donnan_potential)
-
 # select time step
 dt = 0.01
 
-# add source term model
+# add source term models
+phase["pore.donnan_potential_old"] = np.zeros(net.Np)
+phase["pore.concentration_old"] = cf
+phase.add_model(propname="pore.donnan_potential",
+                model=mods.donnan_potential,
+                domain="micropore",
+                pore_potential="pore.potential",
+                pore_electrode_potential="pore.electrode_potential",
+                pore_attraction_term="pore.attraction_term",
+                pore_temperature="pore.temperature",
+                pore_capacitance="pore.capacitance",
+                pore_surface_area="pore.surface_area",
+                pore_concentration="pore.concentration_old")
+phase.add_model(propname="pore.micro_concentration",
+                model=mods.micropore_concentration,
+                domain="micropore",
+                pore_concentration="pore.concentration_old",
+                pore_donnan_potential="pore.donnan_potential",
+                pore_temperature="pore.temperature",
+                pore_attraction_term="pore.attraction_term")
+phase["pore.micro_concentration_old"] = phase["pore.micro_concentration"].copy()
+phase.add_model(propname="pore.mass_source",
+                model=mods.mass_source,
+                domain="micropore",
+                pore_micro_concentration="pore.micro_concentration",
+                pore_micro_concentration_old="pore.micro_concentration_old",
+                pore_micro_volume="pore.effective_volume",
+                time_step=dt)
+phase["pore.donnan_potential_old"] = phase["pore.donnan_potential"].copy()
 phase.add_model(propname="pore.charge_source",
                 model=mods.charge_source,
                 domain="micropore",
@@ -194,46 +219,95 @@ phase.add_model(propname="pore.charge_source",
                 pore_surface_area="pore.surface_area",
                 time_step=dt)
 
+# run stokes flow
+sf = op.algorithms.StokesFlow(network=net, phase=phase)
+sf.set_BC(pores=net.pores('inlet'), bctype="value", bcvalues=0.6)
+sf.set_BC(pores=net.pores('outlet'), bctype="value", bcvalues=0)
+sf.run()
+
+# calculate the flow rate
+Q = sf.rate(pores=net.pores("inlet"), mode="group")[0]
+print(f"PNM Flow Rate: {Q*1e6*60} mL/min")
+
+# scale to cell flow rate
+Ax = (np.max(coords[:, 1]) + spacing/2) * (np.max(coords[:, 2]) + spacing/2)
+Acell = 1.55/100 * 1.55/100  # m2
+f = Acell/Ax
+print(f"Cell Flow Rate: {f*Q*1e6*60} mL/min")
+
+# create mass transport algorithm
+mt = op.algorithms.TransientAdvectionDiffusion(network=net,
+                                               phase=phase)
+# set settings
+mt.settings["conductance"] = "throat.mass_conductance"
+mt.settings["quantity"] = "pore.concentration"
+mt.settings["pore_volume"] = "pore.effective_volume"
+
+# set inflow BC
+phase.add_model(propname="pore.inflow",
+                model=mods.inflow,
+                cf=cf,
+                throat_hydraulic_conductance="throat.hydraulic_conductance",
+                pore_pressure="pore.pressure")
+phase.regenerate_models()
+mt.set_source(pores=net.pores("inlet"), propname="pore.inflow")
+
+# set outflow BC
+mt.set_outflow_BC(pores=net.pores("outlet"))
+
+# set source terms
+mt.set_source(pores=net.pores("micropore"),
+              propname="pore.mass_source")
+
+# Finally, apply BCs and source terms to instantiate A and b
+mt._apply_BCs()
+mt._apply_sources()
+
 # create charge transport algorithm
-ct = op.algorithms.TransientReactiveTransport(network=net, phase=phase)
+# ct = op.algorithms.TransientReactiveTransport(network=net, phase=phase)
+ct = algorithms.CustomTransientReactiveTransport(network=net, phase=phase)
+
 # set settings
 ct.settings["conductance"] = "throat.ionic_conductance"
 ct.settings["quantity"] = "pore.potential"
 ct.settings["pore_volume"] = "pore.effective_volume"
+
 # set source terms
 ct.set_source(pores=net.pores("micropore"),
               propname="pore.charge_source")
+
 # Finally, apply BCs and source terms to instantiate A and b
 ct._apply_BCs()
 ct._apply_sources()
 
-# get A and b matrix
-A = ct.A
-b = ct.b
+# get A and b for charge
+Ac = ct.A
+bc = ct.b
 
 # break up b into steady and transient parts
 mask_t = net["pore.micropore"]
-b_s = b[~mask_t]
-b_t = b[mask_t]  # FIXME: b changes so we have to get new every time
-
-# conver A to csr
-start = time.time()
-A_csr = A.tocsr()
-stop = time.time()
-print(f"Time to convert to csr: {stop - start}s")
+bc_s = bc[~mask_t]
+bc_t = bc[mask_t]  # FIXME: b changes so we have to get new every time
 
 # create masks
 idx_s = np.where(~mask_t)[0]  # indices of macropores (steady)
 idx_t = np.where(mask_t)[0]
 
-A_ss = A_csr[idx_s, :][:, idx_s]  # steady-steady
-A_st = A_csr[idx_s, :][:, idx_t]  # steady-transient
-A_ts = A_csr[idx_t, :][:, idx_s]  # transient-steady
-A_tt = A_csr[idx_t, :][:, idx_t]  # transient-transient
+def _break_up_A(A, idx_s, idx_t):
+    
+    A_ss = A[idx_s, :][:, idx_s]  # steady-steady
+    A_st = A[idx_s, :][:, idx_t]  # steady-transient
+    A_ts = A[idx_t, :][:, idx_s]  # transient-steady
+    A_tt = A[idx_t, :][:, idx_t]  # transient-transient
+    
+    return A_ss, A_st, A_ts, A_tt
 
-# let's use a preconditioner
+# break up A for charge transport
+Ac_ss, Ac_st, Ac_ts, Ac_tt = _break_up_A(Ac, idx_s, idx_t)
+
+# let's use a preconditioner for charge transport
 start = time.time()
-ml = pyamg.smoothed_aggregation_solver(A_ss)
+ml = pyamg.smoothed_aggregation_solver(Ac_ss)
 M = ml.aspreconditioner()
 stop = time.time()
 print(f"Preconditioner Time: {stop - start}s")
@@ -241,16 +315,16 @@ print(f"Preconditioner Time: {stop - start}s")
 
 def solve_ss(rhs):
 
-    z, _ = cg(A_ss, rhs, M=M)
+    z, _ = cg(Ac_ss, rhs, M=M)
 
     return z
 
 
 def schur_matvec(x):
 
-    y = A_tt @ x
-    z = solve_ss(A_st @ x)
-    y -= A_ts @ z
+    y = Ac_tt @ x
+    z = solve_ss(Ac_st @ x)
+    y -= Ac_ts @ z
 
     return y
 
@@ -270,38 +344,162 @@ def rhs_charge(t, x):
     # mat-vec multiplication with schur complement
     y = L_eff @ x  # schur_matvec(x)
     # calcualte dxdt
-    dxdt = (b_t - y)/C/a/V
+    dxdt = (bc_t - y)/C/a/V
 
     return dxdt
 
 
-# perform time stepping
+def rhs_mass(t, c):
+
+    # FIXME: use alg volume
+    # retrieve properties
+    V = phase["pore.effective_volume"]
+    # get A and b for mass
+    Am = mt.A
+    bm = mt.b
+    # calculate dcdt
+    dcdt = (-Am.dot(c) + bm)/V
+
+    return dcdt
+
+
+# choose t0, dt, and tf
 t0 = 0
 dt = dt
-tf = 0.1
+tf = 10
+t_save = np.arange(0, tf + dt, dt)
+# get initial condition of ALL properties
+c = phase["pore.concentration"]
+phi = phase["pore.potential"]
+c_mi = phase["pore.micro_concentration"]
+phi_d = phase["pore.donnan_potential"]
+# store solution for first time!
+y = np.concatenate((c, phi, c_mi, phi_d))
+x = np.array([t0])
+# initialize current
+I = []  # FIXME: is this right?
+# perform time stepping
 for t in np.arange(t0 + dt, tf+dt, dt):
-    print(f"Simulation time: {t}s")
-    # get phi0
-    phi0_t = phase["pore.potential@micropore"].copy()
-    # solve charge balance
-    start = time.time()
-    sol = solve_ivp(rhs_charge,
-                    t_span=(0, dt),
-                    y0=phi0_t,
-                    t_eval=[dt])
-    phi_t = sol.y[:, -1]
-    phi_s = solve_ss(-A_st @ phi_t)
-    stop = time.time()
-    print(f"Time: {stop - start}s")
-    # update potential
-    phase["pore.potential"][mask_t] = phi_t
-    phase["pore.potential"][~mask_t] = phi_s
-    # update donnan potential old
+    print(f"Time: {t}s")
+    # define initial condition for this time step
+    c0 = c.copy()
+    phi0 = phi.copy()
+    phi0_t = phi0[mask_t]
+    # choose c_old and phi_old as initial condition
+    c_old = c0.copy()
+    phi_old = phi0.copy()
+    # define gummel convergence
+    g_res = np.array([100, 100])
+    g_tol = np.array([1e-4, 1e-4])
+    g_max_iter = 10
+    for g_iter in range(g_max_iter):
+        print(f"  Gummel Iteration No. {g_iter + 1}")
+        # solve mass balance
+        start = time.time()
+        sol_m = solve_ivp(rhs_mass,
+                          t_span=(0, dt),
+                          y0=c0,
+                          t_eval=[dt])
+        stop = time.time()
+        print(f"Mass time: {stop - start}s")
+        c = sol_m.y[:, -1]
+        # solve charge balance
+        start = time.time()
+        sol_c = solve_ivp(rhs_charge,
+                          t_span=(0, dt),
+                          y0=phi0_t,
+                          t_eval=[dt])
+        phi_t = sol_c.y[:, -1]
+        phi_s = solve_ss(-Ac_st @ phi_t)
+        stop = time.time()
+        print(f"Charge time: {stop - start}s")
+        # update concentration and potential
+        phase["pore.concentration"] = c
+        phase["pore.potential"][mask_t] = phi_t
+        phase["pore.potential"][~mask_t] = phi_s
+        # regenerate physics based on c and phi
+        start = time.time()
+        phase.regenerate_models()
+        end = time.time()
+        print(f"Regenerate models took {end - start}s")
+        # update transport algs
+        mt["pore.concentration"] = c
+        ct["pore.potential"] = phi
+        mt._update_A_and_b()
+        ct._update_A_and_b()
+        # retrieve A and b for charge
+        Ac = ct.A
+        bc = ct.b
+        # break up A
+        Ac_ss, Ac_st, Ac_ts, Ac_tt = _break_up_A(Ac, idx_s, idx_t)
+        # break up b
+        bc_t = bc[mask_t]
+        # break if g_tol reached
+        print(f"  Residual: {g_res}")
+        if np.all(g_res < g_tol):
+            print(f"  Convergence criteria met: {g_res}")
+            break
+        # break if max no. of iterations reached
+        if g_iter == g_max_iter - 1:
+            break
+        # calculate new residual
+        g_res = np.array([np.sum((c - c_old)**2),
+                          np.sum((phi - phi_old)**2)])
+        # updated old c and phi
+        c_old = c.copy()
+        phi_old = phi.copy()
+    # update old concentration
+    phase["pore.concentration_old"] = phase["pore.concentration"].copy()
+    phase["throat.concentration_old"] = phase["throat.concentration"].copy()
+    # store old c_mi and phi_d
+    phase["pore.micro_concentration_old"] = phase["pore.micro_concentration"].copy()
     phase["pore.donnan_potential_old"] = phase["pore.donnan_potential"].copy()
-    # regenerate phase models
+    # regenerate models
     phase.regenerate_models()
-    # update algorithm
-    ct._apply_BCs()
-    ct._apply_sources()
-    # get new b_t
-    b_t = b[mask_t]
+    # store results if t is in tsave
+    if np.any(np.isclose(t, t_save, atol=1e-10)):
+        # get phi_d and c_mi
+        c_mi = phase["pore.micro_concentration"]
+        phi_d = phase["pore.donnan_potential"]
+        # save results as y and x, assume that everything gets saved!
+        y = np.vstack((y, np.concatenate((c, phi, c_mi, phi_d))))
+        x = np.concatenate((x, np.array([t])))
+        # calculate the current
+        # divide by two because there are two times the number of throats
+        # FIXME: watch this when you scale, I think it works but be careful
+        throats = net.throats("separator")
+        current = ct.rate(throats=throats, mode="group")/2
+        I.append(current[0])
+
+
+plt.figure(1)
+c_out = np.average(y[:, 0:net.Np][:, net["pore.outlet"]], axis=1)
+plt.plot(t_save, c_out, label="outlet")
+plt.legend(frameon=True)
+plt.title("Discharge Curve", fontweight="bold")
+plt.xlabel("Time (s)")
+plt.ylabel("Concentration (mM)")
+
+# plot current
+plt.figure(2)
+plt.plot(t_save[1:], I, label="Discharge")
+plt.legend(frameon=True)
+plt.title("Discharge Curve", fontweight="bold")
+plt.xlabel("Time (s)")
+plt.ylabel("Current (C/s)")
+
+# save data
+data = {}
+data["coords"] = net["pore.coords"]
+data["pore.macropore"] = net["pore.macropore"]
+data["pore.micropore"] = net["pore.micropore"]
+data["pore.separator"] = net["pore.separator"]
+data["pore.inlet"] = net["pore.inlet"]
+data["pore.outlet"] = net["pore.outlet"]
+data["c"] = y[:, 0:net.Np]
+data["phi"] = y[:, net.Np:net.Np*2]
+data["c_mi"] = y[:, net.Np*2:net.Np*3]
+data["phi_d"] = y[:, net.Np*3:net.Np*4]
+data["t"] = t_save
+data["I"] = I
+np.savez("../data/CDI_simulation_1a_" + str(tf) + "s" + ".npz", **data)
