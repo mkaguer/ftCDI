@@ -3,9 +3,10 @@ import models
 
 spheres_and_cylinders = {
     "throat.diffusive_size_factors": {
-        "model": models.diffusive_size_factors.spheres_and_cylinders,
+        "model": models.diffusive_size_factors.custom,
         "pore_diameter": "pore.diameter",
         "throat_diameter": "throat.diameter",
+        "throat_zeta": "throat.zeta",
     },
     "throat.hydraulic_size_factors": {
         "model": models.hydraulic_size_factors.spheres_and_cylinders,
