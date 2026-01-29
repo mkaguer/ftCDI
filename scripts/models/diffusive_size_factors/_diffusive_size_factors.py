@@ -7,7 +7,9 @@ __all__ = ["spheres_and_cylinders",
            "continuum",
            "intersecting_trapezoidals",
            "cylinders_and_trapezoidals",
-           "intersecting_cylinders"]
+           "intersecting_cylinders",
+           "custom",
+           "custom2"]
 
 
 def spheres_and_cylinders(
@@ -258,4 +260,122 @@ def intersecting_cylinders(
     Ft = np.ones_like(F1) * 1e-32
 
     vals = np.vstack([1/F1, 1/Ft, 1/F2]).T
+    return vals
+
+
+def custom(
+    network,
+    pore_diameter="pore.diameter",
+    throat_diameter="throat.diameter",
+    throat_zeta="throat.zeta",
+):
+    r"""
+    Computes diffusive shape coefficient for conduits assuming pores are
+    spheres and throats are cylinders. It is custom because it uses a 
+    characteristic length of reaction/diffusion problems.
+
+    Parameters
+    ----------
+    %(network)s
+    %(Dp)s
+    %(Dt)s
+
+    Returns
+    -------
+    size_factors : ndarray
+        Array (Nt by 3) containing conduit values for each element
+        of the pore-throat-pore conduits. The array is formatted as
+        ``[pore1, throat, pore2]``.
+
+    Notes
+    -----
+    The diffusive size factor is the geometrical part of the pre-factor in
+    Fick's law:
+
+    .. math::
+
+        n_A = \frac{A}{L} \Delta C_A
+            = S_{diffusive} D_{AB} \Delta C_A
+
+    Thus :math:`S_{diffusive}` represents the combined effect of the area and
+    length of the *conduit*, which consists of a throat and 1/2 of the pore
+    on each end.
+
+    """
+    D1, Dt, D2 = network.get_conduit_data(pore_diameter.split('.', 1)[1]).T
+    L1, Lt, L2 = _conduit_lengths.spheres_and_cylinders(
+        network,
+        pore_diameter=pore_diameter,
+        throat_diameter=throat_diameter
+    ).T
+    
+    # adjust for characteristic length
+    zeta = network[throat_zeta]
+    Lt = zeta * Lt
+
+    # Fi is the integral of (1/A) dx, x = [0, Li]
+    F1 = 2 / (D1 * np.pi) * np.arctanh(2 * L1 / D1)
+    F2 = 2 / (D2 * np.pi) * np.arctanh(2 * L2 / D2)
+    Ft = Lt / (np.pi / 4 * Dt ** 2)
+
+    vals = np.vstack([1/F1, 1/Ft, 1/F2]).T
+    return vals
+
+
+def custom2(
+    network,
+    pore_diameter="pore.diameter",
+    throat_diameter="throat.diameter",
+    throat_zeta="throat.zeta",
+):
+    r"""
+    Computes diffusive shape coefficient for conduits assuming pores are
+    spheres and throats are cylinders. It is custom because it uses a 
+    characteristic length of reaction/diffusion problems.
+
+    Parameters
+    ----------
+    %(network)s
+    %(Dp)s
+    %(Dt)s
+
+    Returns
+    -------
+    size_factors : ndarray
+        Array (Nt by 3) containing conduit values for each element
+        of the pore-throat-pore conduits. The array is formatted as
+        ``[pore1, throat, pore2]``.
+
+    Notes
+    -----
+    The diffusive size factor is the geometrical part of the pre-factor in
+    Fick's law:
+
+    .. math::
+
+        n_A = \frac{A}{L} \Delta C_A
+            = S_{diffusive} D_{AB} \Delta C_A
+
+    Thus :math:`S_{diffusive}` represents the combined effect of the area and
+    length of the *conduit*, which consists of a throat and 1/2 of the pore
+    on each end.
+
+    """
+    D1, Dt, D2 = network.get_conduit_data(pore_diameter.split('.', 1)[1]).T
+    L1, Lt, L2 = _conduit_lengths.spheres_and_cylinders(
+        network,
+        pore_diameter=pore_diameter,
+        throat_diameter=throat_diameter
+    ).T
+    
+    # adjust for characteristic length
+    zeta = network[throat_zeta]
+    Lt = zeta * Lt
+
+    # Fi is the integral of (1/A) dx, x = [0, Li]
+    F1 = 2 / (D1 * np.pi) * np.arctanh(2 * L1 / D1)
+    F2 = 2 / (D2 * np.pi) * np.arctanh(2 * L2 / D2)
+    Ft = Lt / (np.pi / 4 * Dt ** 2)
+
+    vals = np.vstack([1/F1, 1/Ft, np.ones(network.Nt)*1e32]).T
     return vals
