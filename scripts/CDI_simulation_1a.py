@@ -11,15 +11,16 @@ import network
 import models
 import algorithms
 import matplotlib.pyplot as plt
+from models.conduit_lengths._conduit_lengths import _get_L_ctc
 
 op.visualization.set_mpl_style()
 
 # set dimensions
-l_sep = 8e-5  # should be 190um (Guyes)
-d = 5e-5
+l_sep = 2.714e-5  # should be 190um (Guyes)
+d = 3e-5
 
 # load network
-data = np.load('../networks/perforated_network_1a.npz')
+data = np.load('../networks/perforated_network_1a_test.npz')
 data = {key: np.array(data[key]) for key in data.files}
 
 # convert to openpnm object
@@ -44,6 +45,10 @@ throats = op.topotools.find_interface_throats(net,
                                               P2=net.pores("perforated"))
 net["throat.perforated"][throats] = False
 net["throat.macropore"][throats] = True
+ts = np.zeros(net.Nt, dtype=bool)
+ts[throats] = True
+net["throat.test"] = ts
+net["pore.test"] = False
 
 # calculate throats coords
 conns = net["throat.conns"]
@@ -54,11 +59,16 @@ net["throat.coords"] = t_coords
 # set pore thickness for perforated pores (i.e. cylinders)
 net["pore.thickness"] = spacing
 
+# set zeta
+net["throat.zeta"] = 1.0
+net["throat.zeta@micropore"] = 1.0
+
 # add geometry models to ALL domains
 geo_mods_micro = collection.geometry.micropore.spheres_and_cylinders
 geo_mods_macro = collection.geometry.macropore.spheres_and_cylinders
 geo_mods_separ = collection.geometry.separator.continuum
 geo_mods_perfo = collection.geometry.macropore.intersecting_cylinders
+geo_mods_test = collection.geometry.interface.spheres_and_cylinders
 net.add_model_collection(models=geo_mods_macro,
                          domain="macropore",
                          regen_mode="normal")
@@ -71,7 +81,13 @@ net.add_model_collection(models=geo_mods_separ,
 net.add_model_collection(models=geo_mods_perfo,
                          domain="perforated",
                          regen_mode="normal")
+'''
+net.add_model_collection(models=geo_mods_test,
+                         domain="test",
+                         regen_mode="normal")
 
+net["throat.macropore"][throats] = True
+'''
 # retrieve properties
 rho_sep = prpts.properties["rho_sep"]
 rho_mi = prpts.properties["rho_mi"]
@@ -87,7 +103,10 @@ eff_vol = models.effective_volume.bcc(network=net,
                                       rho_sep=rho_sep, rho_mi=rho_mi)
 net["pore.effective_volume"] = eff_vol
 
-'''
+# assign micropore volume
+theta = 1.0
+net["pore.micro_volume"] = theta * net["pore.effective_volume"]
+
 # save as xdmf for visualization
 net["throat.radius"] = net["throat.diameter"]/2
 D = net["pore.diameter"].copy()
@@ -95,8 +114,7 @@ D[net.pores("micropore")] = spacing/10
 net["pore.diameter"] = D
 project = net.project
 op.io.project_to_xdmf(project,
-                      filename="../paraview/" + "CDI_simulation_1a" + ".xdmf")
-'''
+                      filename="../paraview/" + "CDI_simulation_1a_test" + ".xdmf")
 
 # create phase object
 phase = op.phase.Phase(network=net)
@@ -178,7 +196,7 @@ phase["pore.surface_area@separator"] = 1
 phase["pore.surface_area@perforated"] = 1
 
 # select time step
-dt = 0.01
+dt = 0.1
 
 # add source term models
 phase["pore.donnan_potential_old"] = np.zeros(net.Np)
@@ -206,7 +224,7 @@ phase.add_model(propname="pore.mass_source",
                 domain="micropore",
                 pore_micro_concentration="pore.micro_concentration",
                 pore_micro_concentration_old="pore.micro_concentration_old",
-                pore_micro_volume="pore.effective_volume",
+                pore_micro_volume="pore.micro_volume",
                 time_step=dt)
 phase["pore.donnan_potential_old"] = phase["pore.donnan_potential"].copy()
 phase.add_model(propname="pore.charge_source",
@@ -221,8 +239,8 @@ phase.add_model(propname="pore.charge_source",
 
 # run stokes flow
 sf = op.algorithms.StokesFlow(network=net, phase=phase)
-sf.set_BC(pores=net.pores('inlet'), bctype="value", bcvalues=0.6)
-sf.set_BC(pores=net.pores('outlet'), bctype="value", bcvalues=0)
+sf.set_BC(pores=net.pores('inlet'), bctype="value", bcvalues=P_in)
+sf.set_BC(pores=net.pores('outlet'), bctype="value", bcvalues=P_out)
 sf.run()
 
 # calculate the flow rate
@@ -363,10 +381,16 @@ def rhs_mass(t, c):
     return dcdt
 
 
+# set pore reaction rate
+phase["pore.rate_t1"] = np.zeros(net.Np)
+phase["pore.rate_t2"] = np.zeros(net.Np)
+phase["pore.y_t1"] = phase["pore.micro_concentration"].copy()
+phase["pore.y_t2"] = phase["pore.micro_concentration"].copy()
+
 # choose t0, dt, and tf
 t0 = 0
 dt = dt
-tf = 10
+tf = 100
 t_save = np.arange(0, tf + dt, dt)
 # get initial condition of ALL properties
 c = phase["pore.concentration"]
@@ -388,6 +412,44 @@ for t in np.arange(t0 + dt, tf+dt, dt):
     # choose c_old and phi_old as initial condition
     c_old = c0.copy()
     phi_old = phi0.copy()
+    # update zeta
+    # D = phase["throat.diffusivity@micropore"]
+    # Lc = np.sqrt(D*t)
+    # L_ctc = _get_L_ctc(net)[net.throats("micropore")]
+    # net["throat.zeta@micropore"] = Lc/L_ctc
+    # net.regenerate_models()
+    '''
+    # calculate k_eff
+    r1 = phase["pore.rate_t1"]
+    r2 = phase["pore.rate_t2"]
+    y1 = phase["pore.y_t1"]
+    y2 = phase["pore.y_t2"]
+    k_eff_np = abs((r2 - r1)/(y2 - y1))  # nan at t = dt
+    # map pore values to throats
+    conns = net["throat.conns@micropore"]
+    is_micro = np.isin(conns, net.pores("micropore"))
+    micro_pores = conns[is_micro]
+    k_eff = np.full(net.Nt, np.nan)
+    k_eff[net.throats("micropore")] = k_eff_np[micro_pores]
+    # calculate Lc
+    D = phase["throat.diffusivity"]
+    Lc = np.sqrt(D*t)
+    if np.isclose(t, dt):
+        print('hi')
+        Lc = np.sqrt(D*t)
+    else:
+        print('bye')
+        # Lc = np.minimum(np.sqrt(D*t), np.sqrt(D/k_eff))
+        L_ctc = _get_L_ctc(net)
+        Lc = np.minimum(np.sqrt(D*t), 0.5*L_ctc)
+    # calculate zeta
+    L_ctc = _get_L_ctc(net)
+    zeta = Lc/L_ctc
+    net["throat.zeta@micropore"] = zeta[net.throats("micropore")] 
+    net.regenerate_models()
+    # store old reaction rate
+    # phase["pore.reaction_rate_old"] = phase["pore.mass_source.rate"]
+    '''
     # define gummel convergence
     g_res = np.array([100, 100])
     g_tol = np.array([1e-4, 1e-4])
@@ -395,33 +457,33 @@ for t in np.arange(t0 + dt, tf+dt, dt):
     for g_iter in range(g_max_iter):
         print(f"  Gummel Iteration No. {g_iter + 1}")
         # solve mass balance
-        start = time.time()
+        # start = time.time()
         sol_m = solve_ivp(rhs_mass,
                           t_span=(0, dt),
                           y0=c0,
                           t_eval=[dt])
-        stop = time.time()
-        print(f"Mass time: {stop - start}s")
-        c = sol_m.y[:, -1]
+        # stop = time.time()
+        # print(f"Mass time: {stop - start}s")
+        c = sol_m.y[:, -1]  # FIXME: this will violate mass balance!
         # solve charge balance
-        start = time.time()
+        # start = time.time()
         sol_c = solve_ivp(rhs_charge,
                           t_span=(0, dt),
                           y0=phi0_t,
                           t_eval=[dt])
         phi_t = sol_c.y[:, -1]
         phi_s = solve_ss(-Ac_st @ phi_t)
-        stop = time.time()
-        print(f"Charge time: {stop - start}s")
+        # stop = time.time()
+        # print(f"Charge time: {stop - start}s")
         # update concentration and potential
         phase["pore.concentration"] = c
         phase["pore.potential"][mask_t] = phi_t
         phase["pore.potential"][~mask_t] = phi_s
         # regenerate physics based on c and phi
-        start = time.time()
+        # start = time.time()
         phase.regenerate_models()
-        end = time.time()
-        print(f"Regenerate models took {end - start}s")
+        # end = time.time()
+        # print(f"Regenerate models took {end - start}s")
         # update transport algs
         mt["pore.concentration"] = c
         ct["pore.potential"] = phi
@@ -448,6 +510,13 @@ for t in np.arange(t0 + dt, tf+dt, dt):
         # updated old c and phi
         c_old = c.copy()
         phi_old = phi.copy()
+    '''
+    # update effective rate constant
+    phase["pore.rate_t1"] = phase["pore.rate_t2"].copy()
+    phase["pore.rate_t2"] = phase["pore.mass_source.rate"].copy()
+    phase["pore.y_t1"] = phase["pore.y_t2"].copy()
+    phase["pore.y_t2"] = phase["pore.micro_concentration"].copy()
+    '''
     # update old concentration
     phase["pore.concentration_old"] = phase["pore.concentration"].copy()
     phase["throat.concentration_old"] = phase["throat.concentration"].copy()
@@ -471,6 +540,41 @@ for t in np.arange(t0 + dt, tf+dt, dt):
         current = ct.rate(throats=throats, mode="group")/2
         I.append(current[0])
 
+
+# calculate "theoretical" maximum capacity
+V = np.sum(net["pore.micro_volume@micropore"]) / 2
+theor_capacity = Ca * V * V_cell / 2 / 96485
+print(f'Theoretical Capacity of charge: {theor_capacity} moles of charge')
+
+# calculate "actual" capacity, how many moles of salt are stored?
+c = phase["pore.concentration@micropore"]
+phid = phase["pore.donnan_potential@micropore"]
+sigma = -2 * c * np.sinh(phid*96485/8.314/298)
+phi_st = -sigma * 96485 / Ca
+mask = sigma > 0
+actual_capacity = np.sum(sigma[mask] * net["pore.micro_volume@micropore"][mask])
+print(f'Actual Capacity of Charge: {actual_capacity} moles of charge')  # 96% of theoretical capacity!
+
+# calculate "actual" capacity
+c = phase["pore.concentration"]
+c_mi = phase["pore.micro_concentration@micropore"]
+total_salt = np.sum(c * net["pore.effective_volume"]) # + np.sum(c_mi/2 * net["pore.micro_volume@micropore"])
+total_salt0 = np.sum(cf * net["pore.effective_volume"]) # + np.sum(cf * net["pore.micro_volume@micropore"])
+print(f'Total Salt Captured 1: {total_salt0 - total_salt} moles of salt')
+
+# calculate "actual" capacity in another way
+V_mi = net["pore.micro_volume@micropore"]
+c_mi = phase["pore.micro_concentration@micropore"]/2 - cf
+print(f'Total Salt Captured 2: {np.sum(c_mi*V_mi)} moles of salt')
+
+# calcualte total salt in micropores
+total = np.sum(phase["pore.micro_concentration@micropore"]/2 * net["pore.micro_volume@micropore"])
+print(f'Total salt in micropores: {total} moles of salt')
+
+# fraction that is captured that was already captured!
+num = np.sum(cf*net["pore.micro_volume@micropore"])
+den = np.sum(phase["pore.micro_concentration@micropore"]/2 * net["pore.micro_volume@micropore"])
+print(f'Fraction already captured: {num/den}')
 
 plt.figure(1)
 c_out = np.average(y[:, 0:net.Np][:, net["pore.outlet"]], axis=1)
