@@ -38,3 +38,4 @@ scripts/models/throat_diameter/__pycache__
 scripts/models/throat_length/__pycache__
 scripts/models/throat_volume/__pycache__
 scripts/properties/__pycache__
+scripts/algorithms/__pycache__
