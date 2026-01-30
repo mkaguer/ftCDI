@@ -83,7 +83,7 @@ rho_mi = prpts.properties["rho_mi"]
 V_cell = prpts.properties["V_cell"]
 Ca = prpts.properties["Ca"]
 mu_att = prpts.properties["mu_att"]
-P_in = prpts.properties["P_in"]  # FIXME: not using these currently
+P_in = prpts.properties["P_in"]
 P_out = prpts.properties["P_out"]
 
 # FIXME: this is SLOW, Fix!
