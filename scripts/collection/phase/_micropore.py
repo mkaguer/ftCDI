@@ -2,7 +2,7 @@ import openpnm.models as mods
 import properties as props
 
 Km = props.properties["Km"]
-rho_mi = props.properties["rho_mi"]
+rho_mi = 1 # props.properties["rho_mi"]
 micropore = {
     "pore.diffusivity": {
         "model": mods.misc.constant,

@@ -11,7 +11,6 @@ import network
 import models
 import algorithms
 import matplotlib.pyplot as plt
-from models.conduit_lengths._conduit_lengths import _get_L_ctc
 
 op.visualization.set_mpl_style()
 
@@ -45,10 +44,6 @@ throats = op.topotools.find_interface_throats(net,
                                               P2=net.pores("perforated"))
 net["throat.perforated"][throats] = False
 net["throat.macropore"][throats] = True
-ts = np.zeros(net.Nt, dtype=bool)
-ts[throats] = True
-net["throat.test"] = ts
-net["pore.test"] = False
 
 # calculate throats coords
 conns = net["throat.conns"]
@@ -61,7 +56,7 @@ net["pore.thickness"] = spacing
 
 # set zeta
 net["throat.zeta"] = 1.0
-net["throat.zeta@micropore"] = 1.0
+net["throat.zeta@micropore"] = 0.1  # this is the one "trick" I need to make work!
 
 # add geometry models to ALL domains
 geo_mods_micro = collection.geometry.micropore.spheres_and_cylinders
@@ -81,13 +76,7 @@ net.add_model_collection(models=geo_mods_separ,
 net.add_model_collection(models=geo_mods_perfo,
                          domain="perforated",
                          regen_mode="normal")
-'''
-net.add_model_collection(models=geo_mods_test,
-                         domain="test",
-                         regen_mode="normal")
 
-net["throat.macropore"][throats] = True
-'''
 # retrieve properties
 rho_sep = prpts.properties["rho_sep"]
 rho_mi = prpts.properties["rho_mi"]
@@ -199,7 +188,7 @@ phase["pore.surface_area@perforated"] = 1
 dt = 0.1
 
 # add source term models
-phase["pore.donnan_potential_old"] = np.zeros(net.Np)
+phase["pore.donnan_potential"] = np.zeros(net.Np)  # initial guess
 phase["pore.concentration_old"] = cf
 phase.add_model(propname="pore.donnan_potential",
                 model=mods.donnan_potential,
@@ -235,6 +224,14 @@ phase.add_model(propname="pore.charge_source",
                 pore_volume="pore.effective_volume",
                 pore_capacitance="pore.capacitance",
                 pore_surface_area="pore.surface_area",
+                time_step=dt)
+
+# add effective mass source
+phase.add_model(propname="pore.mass_source_effective",
+                model=mods.mass_source_effective,
+                pore_mass_source="pore.mass_source",
+                pore_concentration="pore.concentration_old",
+                pore_volume="pore.effective_volume",
                 time_step=dt)
 
 # run stokes flow
@@ -275,7 +272,7 @@ mt.set_outflow_BC(pores=net.pores("outlet"))
 
 # set source terms
 mt.set_source(pores=net.pores("micropore"),
-              propname="pore.mass_source")
+              propname="pore.mass_source_effective")
 
 # Finally, apply BCs and source terms to instantiate A and b
 mt._apply_BCs()
@@ -305,20 +302,22 @@ bc = ct.b
 # break up b into steady and transient parts
 mask_t = net["pore.micropore"]
 bc_s = bc[~mask_t]
-bc_t = bc[mask_t]  # FIXME: b changes so we have to get new every time
+bc_t = bc[mask_t]
 
 # create masks
 idx_s = np.where(~mask_t)[0]  # indices of macropores (steady)
 idx_t = np.where(mask_t)[0]
 
+
 def _break_up_A(A, idx_s, idx_t):
-    
+
     A_ss = A[idx_s, :][:, idx_s]  # steady-steady
     A_st = A[idx_s, :][:, idx_t]  # steady-transient
     A_ts = A[idx_t, :][:, idx_s]  # transient-steady
     A_tt = A[idx_t, :][:, idx_t]  # transient-transient
-    
+
     return A_ss, A_st, A_ts, A_tt
+
 
 # break up A for charge transport
 Ac_ss, Ac_st, Ac_ts, Ac_tt = _break_up_A(Ac, idx_s, idx_t)
@@ -381,16 +380,10 @@ def rhs_mass(t, c):
     return dcdt
 
 
-# set pore reaction rate
-phase["pore.rate_t1"] = np.zeros(net.Np)
-phase["pore.rate_t2"] = np.zeros(net.Np)
-phase["pore.y_t1"] = phase["pore.micro_concentration"].copy()
-phase["pore.y_t2"] = phase["pore.micro_concentration"].copy()
-
 # choose t0, dt, and tf
 t0 = 0
 dt = dt
-tf = 100
+tf = 50
 t_save = np.arange(0, tf + dt, dt)
 # get initial condition of ALL properties
 c = phase["pore.concentration"]
@@ -412,44 +405,6 @@ for t in np.arange(t0 + dt, tf+dt, dt):
     # choose c_old and phi_old as initial condition
     c_old = c0.copy()
     phi_old = phi0.copy()
-    # update zeta
-    # D = phase["throat.diffusivity@micropore"]
-    # Lc = np.sqrt(D*t)
-    # L_ctc = _get_L_ctc(net)[net.throats("micropore")]
-    # net["throat.zeta@micropore"] = Lc/L_ctc
-    # net.regenerate_models()
-    '''
-    # calculate k_eff
-    r1 = phase["pore.rate_t1"]
-    r2 = phase["pore.rate_t2"]
-    y1 = phase["pore.y_t1"]
-    y2 = phase["pore.y_t2"]
-    k_eff_np = abs((r2 - r1)/(y2 - y1))  # nan at t = dt
-    # map pore values to throats
-    conns = net["throat.conns@micropore"]
-    is_micro = np.isin(conns, net.pores("micropore"))
-    micro_pores = conns[is_micro]
-    k_eff = np.full(net.Nt, np.nan)
-    k_eff[net.throats("micropore")] = k_eff_np[micro_pores]
-    # calculate Lc
-    D = phase["throat.diffusivity"]
-    Lc = np.sqrt(D*t)
-    if np.isclose(t, dt):
-        print('hi')
-        Lc = np.sqrt(D*t)
-    else:
-        print('bye')
-        # Lc = np.minimum(np.sqrt(D*t), np.sqrt(D/k_eff))
-        L_ctc = _get_L_ctc(net)
-        Lc = np.minimum(np.sqrt(D*t), 0.5*L_ctc)
-    # calculate zeta
-    L_ctc = _get_L_ctc(net)
-    zeta = Lc/L_ctc
-    net["throat.zeta@micropore"] = zeta[net.throats("micropore")] 
-    net.regenerate_models()
-    # store old reaction rate
-    # phase["pore.reaction_rate_old"] = phase["pore.mass_source.rate"]
-    '''
     # define gummel convergence
     g_res = np.array([100, 100])
     g_tol = np.array([1e-4, 1e-4])
@@ -461,7 +416,8 @@ for t in np.arange(t0 + dt, tf+dt, dt):
         sol_m = solve_ivp(rhs_mass,
                           t_span=(0, dt),
                           y0=c0,
-                          t_eval=[dt])
+                          t_eval=[dt],
+                          mode="RK45")
         # stop = time.time()
         # print(f"Mass time: {stop - start}s")
         c = sol_m.y[:, -1]  # FIXME: this will violate mass balance!
@@ -470,7 +426,8 @@ for t in np.arange(t0 + dt, tf+dt, dt):
         sol_c = solve_ivp(rhs_charge,
                           t_span=(0, dt),
                           y0=phi0_t,
-                          t_eval=[dt])
+                          t_eval=[dt],
+                          mode="RK45")
         phi_t = sol_c.y[:, -1]
         phi_s = solve_ss(-Ac_st @ phi_t)
         # stop = time.time()
@@ -510,16 +467,11 @@ for t in np.arange(t0 + dt, tf+dt, dt):
         # updated old c and phi
         c_old = c.copy()
         phi_old = phi.copy()
-    '''
-    # update effective rate constant
-    phase["pore.rate_t1"] = phase["pore.rate_t2"].copy()
-    phase["pore.rate_t2"] = phase["pore.mass_source.rate"].copy()
-    phase["pore.y_t1"] = phase["pore.y_t2"].copy()
-    phase["pore.y_t2"] = phase["pore.micro_concentration"].copy()
-    '''
     # update old concentration
     phase["pore.concentration_old"] = phase["pore.concentration"].copy()
     phase["throat.concentration_old"] = phase["throat.concentration"].copy()
+    # regenerate models
+    phase.regenerate_models()
     # store old c_mi and phi_d
     phase["pore.micro_concentration_old"] = phase["pore.micro_concentration"].copy()
     phase["pore.donnan_potential_old"] = phase["pore.donnan_potential"].copy()
@@ -540,41 +492,16 @@ for t in np.arange(t0 + dt, tf+dt, dt):
         current = ct.rate(throats=throats, mode="group")/2
         I.append(current[0])
 
-
-# calculate "theoretical" maximum capacity
+# see cdi_simulation_1a branch for other calcs
+# calculate "theoretical" charge capacity
 V = np.sum(net["pore.micro_volume@micropore"]) / 2
-theor_capacity = Ca * V * V_cell / 2 / 96485
-print(f'Theoretical Capacity of charge: {theor_capacity} moles of charge')
+capacity_theory = Ca * V * V_cell / 2 / 96485
+print(f'Theoretical Capacity of charge: {capacity_theory} moles of charge')
 
-# calculate "actual" capacity, how many moles of salt are stored?
-c = phase["pore.concentration@micropore"]
-phid = phase["pore.donnan_potential@micropore"]
-sigma = -2 * c * np.sinh(phid*96485/8.314/298)
-phi_st = -sigma * 96485 / Ca
-mask = sigma > 0
-actual_capacity = np.sum(sigma[mask] * net["pore.micro_volume@micropore"][mask])
-print(f'Actual Capacity of Charge: {actual_capacity} moles of charge')  # 96% of theoretical capacity!
-
-# calculate "actual" capacity
-c = phase["pore.concentration"]
-c_mi = phase["pore.micro_concentration@micropore"]
-total_salt = np.sum(c * net["pore.effective_volume"]) # + np.sum(c_mi/2 * net["pore.micro_volume@micropore"])
-total_salt0 = np.sum(cf * net["pore.effective_volume"]) # + np.sum(cf * net["pore.micro_volume@micropore"])
-print(f'Total Salt Captured 1: {total_salt0 - total_salt} moles of salt')
-
-# calculate "actual" capacity in another way
+# calculate "actual" salt capacity
 V_mi = net["pore.micro_volume@micropore"]
 c_mi = phase["pore.micro_concentration@micropore"]/2 - cf
 print(f'Total Salt Captured 2: {np.sum(c_mi*V_mi)} moles of salt')
-
-# calcualte total salt in micropores
-total = np.sum(phase["pore.micro_concentration@micropore"]/2 * net["pore.micro_volume@micropore"])
-print(f'Total salt in micropores: {total} moles of salt')
-
-# fraction that is captured that was already captured!
-num = np.sum(cf*net["pore.micro_volume@micropore"])
-den = np.sum(phase["pore.micro_concentration@micropore"]/2 * net["pore.micro_volume@micropore"])
-print(f'Fraction already captured: {num/den}')
 
 plt.figure(1)
 c_out = np.average(y[:, 0:net.Np][:, net["pore.outlet"]], axis=1)

@@ -2,6 +2,7 @@ import numpy as np
 import scipy as sp
 import openpnm.models.geometry.conduit_lengths as _conduit_lengths
 from openpnm.models.physics._utils import _poisson_conductance
+import time
 
 __all__ = ["continuum_size_factor",
            "micropore_size_factor",
@@ -15,7 +16,8 @@ __all__ = ["continuum_size_factor",
            "inflow",
            "outflow",
            "generic_diffusive",
-           "effective_diffusivity"]
+           "effective_diffusivity",
+           "mass_source_effective"]
 
 def continuum_size_factor(
     network,
@@ -119,10 +121,13 @@ def donnan_potential(phase,
         return f
     
     # use fsolve to find the donnan potential
-    phi_d0 = phase["pore.donnan_potential_old"]
+    phi_d0 = phase["pore.donnan_potential"]
     mask = np.isnan(phi_d0)
     phi_d0[mask] = 0
-    phi_d = sp.optimize.newton_krylov(potential_balance, phi_d0)
+    # start = time.time()
+    phi_d = sp.optimize.newton_krylov(potential_balance, phi_d0, f_tol=6e-6)
+    # stop = time.time()
+    # print(f"Newton krylov time: {stop - start}s")
     
     return phi_d
 
@@ -328,3 +333,36 @@ def generic_diffusive(phase,
 def effective_diffusivity(phase, D, epsilon, tau):
     
     return epsilon * D / tau
+
+
+def mass_source_effective(phase,
+                          pore_mass_source="pore.mass_source",
+                          pore_concentration="pore.concentration",
+                          pore_volume="pore.volume",
+                          time_step=0.1):
+    
+    # get network
+    network = phase.network
+    
+    R = phase[pore_mass_source + ".rate"]   # units: mass / time
+    V = network[pore_volume]
+    c = phase[pore_concentration]
+    
+    # Maximum removable mass rate (positive number)
+    R_max = c * V / time_step
+    
+    # Start with original rate
+    R_eff = R.copy()
+    
+    # Identify sinks (negative rates)
+    sink = R < 0
+    
+    # Limit sink magnitude
+    R_eff[sink] = np.maximum(R[sink], -R_max[sink])
+    
+    S1 = 0
+    S2 = R_eff
+    rate = S2
+    values = {"S1": S1, "S2": S2, "rate": rate}
+    
+    return values
