@@ -1,2 +1,2 @@
-from ._funcs import bcc, cubic
+from ._funcs import bcc, cubic, bcc_fast
 
