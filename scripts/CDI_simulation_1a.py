@@ -86,10 +86,13 @@ mu_att = prpts.properties["mu_att"]
 P_in = prpts.properties["P_in"]
 P_out = prpts.properties["P_out"]
 
-# FIXME: this is SLOW, Fix!
+# FIXME: there is a small but negligeable volume added to perforated pores
 # calculate effective volume
-eff_vol = models.effective_volume.bcc(network=net,
-                                      rho_sep=rho_sep, rho_mi=rho_mi)
+start = time.time()
+eff_vol = models.effective_volume.bcc_fast(network=net,
+                                           rho_sep=rho_sep, rho_mi=rho_mi)
+stop = time.time()
+print(f"time to calc volumes: {stop - start}s")
 net["pore.effective_volume"] = eff_vol
 
 # assign micropore volume
