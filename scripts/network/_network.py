@@ -5,7 +5,8 @@ __all__ = ["my_bcc",
            "slice_network",
            "cut_hole",
            "add_perforated_pores",
-           "create_full_cell"]
+           "create_full_cell",
+           "create_full_cell_v2"]
 
 
 def my_bcc(shape, spacing=1):
@@ -201,6 +202,76 @@ def create_full_cell(network, l_separator=1e-4):
     # add separator nodes
     throats = network.throats("separator")
     network = _add_throat_nodes(network, throats, label="separator")
+    # add cathode and anode labels
+    coords = network["pore.coords"]
+    network["pore.cathode"] = coords[:, 0] < x_plane
+    network["pore.anode"] = coords[:, 0] > x_plane
+    # remove and reassign inlet/outlet labels to macropores
+    mask = network["pore.perforated"]
+    del network["pore.inlet"]
+    del network["pore.outlet"]
+    network["pore.inlet"] = (coords[:, 0] == np.min(coords[:, 0])) * mask
+    network["pore.outlet"] = (coords[:, 0] == np.max(coords[:, 0])) * mask
+
+    return network
+
+
+def create_full_cell_v2(network, l_separator=1e-4):
+    """
+    
+    v2: stitches adjacent macropores
+    
+    """
+    # get Nt
+    Nt = network.Nt
+    # get coords
+    coords = network["pore.coords"]
+    # get plane
+    x_plane = np.max(coords[:, 0]) + l_separator/2
+    # get distance to plane
+    dist = x_plane - coords[:, 0]
+    # mirror network to get donor network
+    donor = network.copy()
+    donor = op.io.network_from_porespy(donor)
+    coords = donor["pore.coords"].copy()
+    coords[:, 0] += 2*dist
+    donor["pore.coords"] = coords
+    try:
+        # get throat coords
+        t_coords = network["throat.coords"]
+        # get plane
+        x_plane_t = np.max(t_coords[:, 0]) + l_separator/2
+        # get distance to plane
+        dist_t = x_plane_t - t_coords[:, 0]
+        # mirror throats in donor network
+        t_coords = donor["throat.coords"].copy()
+        t_coords[:, 0] += 2*dist_t
+        donor["throat.coords"] = t_coords
+    except:
+        pass
+    # stitch donor to network
+    xmax = np.max(network["pore.coords"][:, 0])
+    xmin = np.min(donor["pore.coords"][:, 0])
+    network["pore.xmax"] = network["pore.coords"][:, 0] == xmax
+    donor["pore.xmin"] = donor["pore.coords"][:, 0] == xmin
+    P_network = network.pores(["outlet", "xmax"], mode="or")
+    P_donor = donor.pores(["outlet", "xmin"], mode="or")  # reflected
+    op.topotools.stitch(network,
+                        donor,
+                        P_network,
+                        P_donor,
+                        method="nearest",
+                        label_stitches="separator")
+    # add back donor throat coords
+    try:
+        network["throat.coords"][Nt:2*Nt, :] = donor["throat.coords"]
+    except:
+        pass
+    # add separator nodes
+    throats = network.find_neighbor_throats(network.pores("perforated"))
+    throats = network.filter_by_label(throats=throats, labels="separator")
+    network = _add_throat_nodes(network, throats, label="separator_channel")
+    network.set_label(label="separator_channel", throats=throats)
     # add cathode and anode labels
     coords = network["pore.coords"]
     network["pore.cathode"] = coords[:, 0] < x_plane
