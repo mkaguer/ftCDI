@@ -101,7 +101,7 @@ def add_perforated_pores(network, axis=0):
     # determine donor extent
     ax_min = coords[:, axis].min()
     ax_max = coords[:, axis].max()
-    num_pores = int((ax_max - ax_min) / spacing + 1)
+    num_pores = int(np.round((ax_max - ax_min) / spacing + 1))
     # create donor network
     shape = np.ones(3, dtype=int)
     shape[axis] = num_pores
