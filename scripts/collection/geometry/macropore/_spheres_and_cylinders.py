@@ -23,7 +23,7 @@ spheres_and_cylinders = {
         "throat_length": "throat.length",
     },
     "throat.lens_volume": {
-        "model": mods.geometry.throat_volume.lens,
+        "model": models.throat_volume.lens,
         "throat_diameter": "throat.diameter",
         "pore_diameter": "pore.diameter",
     },
