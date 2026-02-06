@@ -17,7 +17,8 @@ __all__ = ["continuum_size_factor",
            "outflow",
            "generic_diffusive",
            "effective_diffusivity",
-           "mass_source_effective"]
+           "mass_source_effective",
+           "reshape"]
 
 def continuum_size_factor(
     network,
@@ -366,3 +367,11 @@ def mass_source_effective(phase,
     values = {"S1": S1, "S2": S2, "rate": rate}
     
     return values
+
+
+def reshape(phase,
+            prop):
+    
+    prop = phase[prop]
+    
+    return np.array([prop, prop]).T

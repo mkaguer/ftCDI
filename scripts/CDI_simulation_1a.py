@@ -45,6 +45,10 @@ throats = op.topotools.find_interface_throats(net,
 net["throat.perforated"][throats] = False
 net["throat.macropore"][throats] = True
 
+# remove macropore label from perforated throats
+throats = net.throats("perforated")
+net["throat.macropore"][throats] = False
+
 # calculate throats coords
 conns = net["throat.conns"]
 coords = net["pore.coords"]
@@ -145,8 +149,10 @@ phase.add_model(propname="throat.temperature",
 phase["pore.concentration_old"] = phase["pore.concentration"].copy()
 phase["throat.concentration_old"] = phase["throat.concentration"].copy()
 
+# FIXME: write physics.perforated, same as current physics.macropore
+# But right NEW physics.macropore that has 1e-32 hydraulic conductance
 # add physics models
-phase.add_model_collection(models=collection.physics.macropore,
+phase.add_model_collection(models=collection.physics.perforated,
                            domain="perforated",
                            regen_mode="normal")
 phase.add_model_collection(models=collection.physics.macropore,
@@ -261,14 +267,8 @@ mt.settings["conductance"] = "throat.mass_conductance"
 mt.settings["quantity"] = "pore.concentration"
 mt.settings["pore_volume"] = "pore.effective_volume"
 
-# set inflow BC
-phase.add_model(propname="pore.inflow",
-                model=mods.inflow,
-                cf=cf,
-                throat_hydraulic_conductance="throat.hydraulic_conductance",
-                pore_pressure="pore.pressure")
-phase.regenerate_models()
-mt.set_source(pores=net.pores("inlet"), propname="pore.inflow")
+# set value BC as inflow
+mt.set_value_BC(pores=net.pores("inlet"), values=cf)
 
 # set outflow BC
 mt.set_outflow_BC(pores=net.pores("outlet"))
@@ -379,6 +379,8 @@ def rhs_mass(t, c):
     bm = mt.b
     # calculate dcdt
     dcdt = (-Am.dot(c) + bm)/V
+    mask = np.abs(dcdt) < 1e-10  # FIXME: play with this number
+    dcdt[mask] = 0
 
     return dcdt
 
@@ -420,7 +422,7 @@ for t in np.arange(t0 + dt, tf+dt, dt):
                           t_span=(0, dt),
                           y0=c0,
                           t_eval=[dt],
-                          mode="RK45")
+                          method="RK45")
         # stop = time.time()
         # print(f"Mass time: {stop - start}s")
         c = sol_m.y[:, -1]  # FIXME: this will violate mass balance!
@@ -430,7 +432,7 @@ for t in np.arange(t0 + dt, tf+dt, dt):
                           t_span=(0, dt),
                           y0=phi0_t,
                           t_eval=[dt],
-                          mode="RK45")
+                          method="RK45")
         phi_t = sol_c.y[:, -1]
         phi_s = solve_ss(-Ac_st @ phi_t)
         # stop = time.time()
