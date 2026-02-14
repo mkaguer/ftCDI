@@ -122,6 +122,7 @@ def dae_solve_v2(u0,
                  is_transient,
                  M=None,
                  tol=1e-6,
+                 atol=0.0,
                  maxiter=50):
         
     
@@ -158,6 +159,7 @@ def dae_solve_v2(u0,
             matvec,
             rhs_vec,
             tol=tol,
+            atol=atol,
             maxiter=maxiter,
             M=M,
         )
