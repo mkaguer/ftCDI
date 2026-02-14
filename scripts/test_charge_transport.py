@@ -1,6 +1,7 @@
 import numpy as np
 import openpnm as op
 import collection
+import algorithms
 import models.misc as mods
 from scipy.integrate import solve_ivp
 from scipy.sparse.linalg import cg, LinearOperator
@@ -10,7 +11,7 @@ import time
 # create network
 spacing = 1e-5
 start = time.time()
-net = op.network.BodyCenteredCubic(shape=[11, 10, 10], spacing=spacing)
+net = op.network.BodyCenteredCubic(shape=[10, 10, 10], spacing=spacing)
 stop = time.time()
 print(f"Time to build network: {stop - start}s")
 
@@ -65,6 +66,7 @@ net.regenerate_models()
 Vp = net["pore.volume@macropore"][0]
 Vt = net["throat.volume@macropore"][0]
 net["pore.effective_volume@micropore"] = 0.2*(spacing**3 - Vp - Vt*2)  # FIXME: multiply by porosity
+net["throat.volume@micropore"] = 0
 eff_vol_mod = op.models.geometry.pore_volume.effective
 net.add_model(propname="pore.effective_volume",
               model=eff_vol_mod,
@@ -109,7 +111,7 @@ phase.add_model_collection(models=phys_mods_mi, domain="micropore")
 phase.regenerate_models()
 
 # add donnan potential model
-phase["pore.donnan_potential_old"] = np.zeros(net.Np)  # guess
+phase["pore.donnan_potential"] = np.zeros(net.Np)  # guess
 phase.add_model(propname="pore.donnan_potential",
                 model=mods.donnan_potential)
 
@@ -117,6 +119,7 @@ phase.add_model(propname="pore.donnan_potential",
 dt = 0.01
 
 # add source term model
+phase["pore.donnan_potential_old"] = phase["pore.donnan_potential"].copy() 
 phase.add_model(propname="pore.charge_source",
                 model=mods.charge_source,
                 domain="micropore",
@@ -128,7 +131,8 @@ phase.add_model(propname="pore.charge_source",
                 time_step=dt)
 
 # create charge transport algorithm
-ct = op.algorithms.TransientReactiveTransport(network=net, phase=phase)
+# ct = op.algorithms.TransientReactiveTransport(network=net, phase=phase)
+ct = algorithms.CustomTransientReactiveTransport(network=net, phase=phase)
 # set settings
 ct.settings["conductance"] = "throat.ionic_conductance"
 ct.settings["quantity"] = "pore.potential"
@@ -214,7 +218,7 @@ def rhs_charge(t, x):
 
 # perform time stepping
 t0 = 0
-dt = dt
+dt = 0.01
 tf = 0.01
 for t in np.arange(t0 + dt, tf+dt, dt):
     print(f"Simulation time: {t}s")
@@ -242,3 +246,7 @@ for t in np.arange(t0 + dt, tf+dt, dt):
     ct._apply_sources()
     # get new b_t
     b_t = b[~mask_s]
+
+
+print(phase["pore.potential"])
+print(np.average(phase["pore.potential@anode"]))
