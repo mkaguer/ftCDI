@@ -178,13 +178,13 @@ print(V.device)
 print(phi0.device)
 
 
-
-def implicit_solve(u0,
-                   t_span,
-                   dt,
-                   args,
-                   tol=1e-6,
-                   maxiter=50):
+def dae_solve(u0,
+              t_span,
+              dt,
+              args,
+              is_transient,
+              tol=1e-6,
+              maxiter=50):
         
     
     def linear_map(dt, A, b, V):
@@ -198,7 +198,10 @@ def implicit_solve(u0,
     
     
     # get A, b, V from args
-    # A, b, V = args
+    A, b, V = args
+    # mask out is_transient
+    V = jnp.where(is_transient, V, 0)
+    args = (A, b, V)
     # get t0 and tf
     t0, tf = t_span
     # get u_prev
@@ -230,10 +233,6 @@ def implicit_solve(u0,
     return ts, us
 
 
-# mask out Vs
-mask = net["pore.macropore"]
-V = jnp.where(mask, 0, V)
-
 '''
 # build I matrix
 n = net.Np
@@ -252,7 +251,7 @@ print(np.min(eigvals))
 '''
 
 static_argnames = ["t_span", "dt"]
-implicit_solve = jax.jit(implicit_solve, static_argnames=static_argnames)
+dae_solve = jax.jit(dae_solve, static_argnames=static_argnames)
 
 # first solve
 dt = 0.01
@@ -260,12 +259,13 @@ t_span = (0, 0.01)
 args = (A, b, V)
 u0 = phi0
 start = time.time()
-ts, us = implicit_solve(u0,
-                        t_span,
-                        dt,
-                        args,
-                        tol=1e-6,
-                        maxiter=50)
+ts, us = dae_solve(u0,
+                   t_span,
+                   dt,
+                   args,
+                   is_transient=net["pore.micropore"],
+                   tol=1e-6,
+                   maxiter=50)
 us.block_until_ready()
 stop = time.time()
 print(f"time: {stop - start}s")  # 0.10451889038085938s
@@ -279,12 +279,13 @@ t_span = (0, 0.01)
 args = (A, b, V)
 u0 = phi0
 start = time.time()
-ts, us = implicit_solve(u0,
-                        t_span,
-                        dt,
-                        args,
-                        tol=1e-6,
-                        maxiter=50)
+ts, us = dae_solve(u0,
+                   t_span,
+                   dt,
+                   args,
+                   is_transient=net["pore.micropore"],
+                   tol=1e-6,
+                   maxiter=50)
 us.block_until_ready()
 stop = time.time()
 print(f"time: {stop - start}s")
