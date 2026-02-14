@@ -1,7 +1,10 @@
 import jax
 import jax.numpy as jnp
 
-__all__ = ['implicit_solve']
+
+__all__ = ['implicit_solve',
+           'implicit_solve_v2']
+
 
 def implicit_solve(fun,
                    t_span,
@@ -119,3 +122,58 @@ def implicit_solve(fun,
 
     return ts, us
 
+
+def implicit_solve_v2(u0,
+                       t_span,
+                       dt,
+                       args,
+                       tol=1e-6,
+                       maxiter=50):
+    """
+    This version does NOT use jax.jvp, it uses cg directly!
+    Solve crank-nicolson, not good for DAE!
+
+    """
+        
+    
+    def linear_map(dt, A, b, V):
+        def matvec(u):
+            return u + dt / 2 / V * A @ u
+        return matvec
+
+
+    def rhs(u_prev, dt, A, b, V):
+        return u_prev - dt / 2 / V * A @ u_prev + dt / V * b
+    
+    
+    # get A, b, V from args
+    # A, b, V = args
+    # get t0 and tf
+    t0, tf = t_span
+    # get u_prev
+    u_prev = u0
+    # initialize solution
+    us = jnp.array([u_prev])
+    ts = jnp.array([t0])
+    # time stepping
+    for t in jnp.arange(t0+dt, tf+dt, dt):
+        # get matvec, can we put this outsie?
+        matvec = linear_map(dt, *args)
+        # get rhs for new u_prev
+        rhs_vec = rhs(u_prev, dt, *args)
+        # solve using cg
+        u, info = jax.scipy.sparse.linalg.cg(
+            matvec,
+            rhs_vec,
+            tol=tol,
+            maxiter=maxiter,
+        )
+        # update u_prev
+        u_prev = u
+        # FIXME: make t_eval argument!
+        # save u at every time step
+        us = jnp.concatenate((us, jnp.array([u_prev])))
+        ts = jnp.concatenate((ts, jnp.array([t])))
+    
+    
+    return ts, us
