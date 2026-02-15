@@ -83,12 +83,14 @@ plt.show()
 # intialize network
 net = op.network.Cubic(shape=[10, 10, 10], spacing=1e-5)
 geo_mods = op.models.collections.geometry.spheres_and_cylinders.copy()
+del geo_mods['pore.diameter']
+net['pore.diameter'] = 5e-6
 net.add_model_collection(models=geo_mods)
 net.regenerate_models()
 
 # initialize phase
 phase = op.phase.Water(network=net)
-phase["throat.diffusivity"] = 1.68e-9
+phase["throat.diffusivity"] = 1e-9  # 1.68e-9
 phys_mods = op.models.collections.physics.basic.copy()
 phase.add_model_collection(models=phys_mods)
 phase.regenerate_models()
@@ -102,10 +104,15 @@ net["pore.concentration"] = c0
 mt = op.algorithms.TransientFickianDiffusion(network=net,
                                              phase=phase)
 mt.set_value_BC(pores=net.pores("xmin"), values=1)
+mt.set_value_BC(pores=net.pores("xmax"), values=0)
 
 # Finally, apply BCs and source terms to instantiate A and b
 mt._apply_BCs()
 mt._apply_sources()
+
+# get A and b
+A = mt.A.tocsc()
+b = mt.b
 
 def rhs_mass(t, c):
 
@@ -113,8 +120,10 @@ def rhs_mass(t, c):
     # retrieve properties
     V = phase[mt.settings["pore_volume"]]
     # get A and b for mass
-    Am = mt.A
-    bm = mt.b
+    # Am = mt.A
+    # bm = mt.b
+    Am = A
+    bm = b
     # calculate dcdt
     dcdt = (-Am.dot(c) + bm)/V
 
@@ -126,7 +135,12 @@ y0 = c0
 
 # select parameters
 h = 0.001
+tf = 100
+t_eval = np.arange(0, 101, 10)
+
+t0 = 0
 tf = 10
+t_eval = np.arange(0, 11, 1)
 
 # solve using solve_ivp
 start = time.time()
@@ -134,14 +148,18 @@ sol = solve_ivp(rhs_mass,
                 t_span=(t0, tf),
                 y0=y0,
                 method="RK45",
-                t_eval=np.arange(t0, tf+h, h))
+                t_eval=t_eval,
+                atol=1e-6,
+                rtol=1e-6)
 stop = time.time()
 print(f"RK45 Time: {stop - start}s")
+
+print(np.average(sol.y[:, -1]))
 
 # solve using my_RK4
 start = time.time()
 ts, ys = my_RK4(rhs_mass, t_span=(t0, tf), y0=y0, h=h,
-                t_eval=np.arange(t0, tf+h*10, h*10))
+                t_eval=t_eval)
 stop = time.time()
 print(f"RK4 Time: {stop - start}s")
 
