@@ -183,6 +183,7 @@ def dae_solve(u0,
               dt,
               args,
               is_transient,
+              M=None,
               tol=1e-6,
               maxiter=50):
         
@@ -221,6 +222,7 @@ def dae_solve(u0,
             rhs_vec,
             tol=tol,
             maxiter=maxiter,
+            M=M,
         )
         # update u_prev
         u_prev = u
@@ -250,7 +252,21 @@ print(np.sum(eigvals < 0))
 print(np.min(eigvals))
 '''
 
-static_argnames = ["t_span", "dt"]
+# FIXME: this is not the right diag! We need diag of (V/dt*I + A)
+# get diag of A
+row = A.indices[:, 0]
+col = A.indices[:, 1]
+data = A.data
+mask = row == col
+diag = jnp.zeros(A.shape[0]).at[row[mask]].add(data[mask])
+
+
+# pre-conditioner
+def preconditioner(x):
+    return x / (diag + 1e-12)
+
+
+static_argnames = ["t_span", "dt", "M"]
 dae_solve = jax.jit(dae_solve, static_argnames=static_argnames)
 
 # first solve
@@ -264,6 +280,7 @@ ts, us = dae_solve(u0,
                    dt,
                    args,
                    is_transient=net["pore.micropore"],
+                   M=None,
                    tol=1e-6,
                    maxiter=50)
 us.block_until_ready()
@@ -284,6 +301,7 @@ ts, us = dae_solve(u0,
                    dt,
                    args,
                    is_transient=net["pore.micropore"],
+                   M=None,
                    tol=1e-6,
                    maxiter=50)
 us.block_until_ready()
