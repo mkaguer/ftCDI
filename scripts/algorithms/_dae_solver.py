@@ -158,6 +158,7 @@ def dae_solve_v2(u0,
         u, info = jax.scipy.sparse.linalg.cg(
             matvec,
             rhs_vec,
+            x0=u_prev,
             tol=tol,
             atol=atol,
             maxiter=maxiter,
