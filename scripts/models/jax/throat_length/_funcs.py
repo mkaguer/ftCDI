@@ -20,7 +20,7 @@ def spheres_and_cylinders(
         A numpy ndarray containing throat length values
 
     """
-    from models import conduit_lengths
+    from models.jax import conduit_lengths
     out = conduit_lengths.spheres_and_cylinders(
         network=network,
         pore_diameter=pore_diameter,
@@ -50,7 +50,7 @@ def continuum(
         A numpy ndarray containing throat length values
 
     """
-    from models import conduit_lengths
+    from models.jax import conduit_lengths
     out = conduit_lengths.cubes_and_cuboids(
         network=network,
         pore_diameter=pore_diameter,
@@ -82,6 +82,6 @@ def intersecting_trapezoidals(network,
         ``[pore1, throat, pore2]``.
 
     """
-    from models import conduit_lengths
+    from models.jax import conduit_lengths
     L = conduit_lengths.intersecting_trapezoidals(network=network)
     return L[:, 1]

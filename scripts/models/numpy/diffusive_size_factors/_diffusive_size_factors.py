@@ -1,6 +1,6 @@
 import numpy as np
-import models.conduit_lengths as _conduit_lengths
-from models.conduit_lengths._conduit_lengths import _get_L_ctc
+import models.numpy.conduit_lengths as _conduit_lengths
+from models.numpy.conduit_lengths._conduit_lengths import _get_L_ctc
 
 __all__ = ["spheres_and_cylinders",
            "cubes_and_cuboids",
