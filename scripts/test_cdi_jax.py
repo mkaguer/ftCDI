@@ -207,28 +207,38 @@ def _get_charge_A_and_b(network):
     # build A and b
     ct["A"] = pnm.algorithms.build_A(proj, "alg3")
     ct["b"] = pnm.algorithms.build_b(proj, "alg3")
+    
+    # set BCs, set phi @ separator to zero helped stabilize gmres
+    pores=net["pore.separator"]
+    pnm.algorithms.set_BC(proj, "alg3", pores, bctype='value',
+                          bcvalues=0, mode="overwrite")
 
-    # apply sources (there are no BCs)
+    # apply sources
     ct["A"], ct["b"] = pnm.algorithms.apply_sources(proj, alg="alg3")
+    
+    # apply BCs
+    ct["A"], ct["b"] = pnm.algorithms.apply_BC(proj, alg="alg3")
     
     return ct["A"], ct["b"]
 
 
 def fun(network, u):
-
-    # get Np
-    Np = len(network["pore.coords"])
     
+    # get coords and conns
+    coords = network["pore.coords"]
+    conns = network["throat.conns"]
+
     # split up u
+    Np = len(coords)
     c = u[:Np]
     phi = u[Np:]
     
     # update ionic conductivity (pore and throat)
     conductivity = models.electrical_double_layer.conductivity
-    Kp = conductivity(c=network["pore.concentration_old"],
+    Kp = conductivity(c=c,
                       D=network["pore.diffusivity"],
                       T=network["pore.temperature"])
-    Kt = conductivity(c=network["throat.concentration_old"],
+    Kt = conductivity(c=jnp.average(c[conns], axis=1),
                       D=network["throat.diffusivity"],
                       T=network["throat.temperature"])
 
@@ -277,14 +287,14 @@ def fun(network, u):
     Am, bm = _get_mass_A_and_b(network)
     Ac, bc = _get_charge_A_and_b(network)
     
-    # dcdt and dphidt, note V is missing!
-    dcdt = (-Am @ c + bm)
-    dphidt = (-Ac @ phi + bc)
+    # calculate flux!
+    flux_mass = (-Am @ c + bm)
+    flux_charge = (-Ac @ phi + bc)
     
-    # get dudt
-    dudt = jnp.concatenate((dcdt, dphidt))
+    # get flux
+    flux = jnp.concatenate((flux_mass, flux_charge))
     
-    return dudt
+    return flux
 
 
 def residual(network, u, u_prev, dt):
@@ -299,11 +309,11 @@ def residual(network, u, u_prev, dt):
     CaV = jnp.where(network["pore.micropore"], C*a*V, 0.0)
     
     # get dudt
-    dudt = fun(network, u)
+    flux = fun(network, u)
     
     # split up dudt
-    dcdt = dudt[:Np]
-    dphidt = dudt[Np:]
+    flux_mass = flux[:Np]
+    flux_charge = flux[Np:]
     
     # split up u
     c = u[:Np]
@@ -313,8 +323,8 @@ def residual(network, u, u_prev, dt):
     c_prev = u_prev[:Np]
     phi_prev = u_prev[Np:]
     
-    F_mass = V*(c - c_prev)/dt - dcdt
-    F_charge = CaV*(phi - phi_prev)/dt - dphidt
+    F_mass = V*(c - c_prev)/dt - flux_mass
+    F_charge = CaV*(phi - phi_prev)/dt - flux_charge
     
     F = jnp.concatenate((F_mass, F_charge))
     
@@ -327,10 +337,10 @@ def implicit_solve(network,
                    t_span,
                    u0,
                    dt,
-                   iters=10,
+                   iters=20,
                    tol=1e-6,
                    newton_maxiter=50,
-                   newton_tol=1e-18,
+                   newton_tol=1e-8,
                    alpha=0.9, 
                    check_convergence=False):
 
@@ -375,21 +385,27 @@ def implicit_solve(network,
 
         for i in range(iters):
             print(i)
-            print(u)
+            # print(u)
             F = residual(network, u, u_prev, dt)
-            print(F)
+            print(jnp.linalg.norm(F))
             # do one newton step
             delta = newton_step(u, u_prev, dt,
                                 newton_tol, newton_maxiter)
-            print(delta)
-            # update u for next step
-            u = u + alpha*delta  # damping is important for rxn systems
+            # print(delta)
 
-            # set c < 0 to zero
-            c = u[:Np]
-            phi = u[Np:]
-            c = jnp.where(c < 0, 1e-5, c)  # avoids negative c
-            u = jnp.concatenate((c, phi))
+            # update
+            u_old = u.copy()
+            u = u_old + alpha*delta
+            
+            # line search for alpha
+            c = u[:Np]  # this is the problem
+            alpha_ls = alpha
+            while jnp.any(c < 0):
+                # get new alpha
+                alpha_ls *= 0.8  # FIXME: make 0.5 argument
+                # update c
+                u = u_old + alpha_ls*delta
+                c = u[:Np]
             
             # set to True if not jitted
             if check_convergence:
@@ -501,9 +517,9 @@ for t in jnp.arange(t0+dt, tf+dt, dt):
                             mu_att=net["pore.attraction_term"])
     net["pore.micro_concentration_old"] = c_mi.copy()
     # update concentration old
-    net["pore.concentration_old"] = c.copy()
-    conns = net["throat.conns"]
-    net["throat.concentration_old"] = jnp.average(c[conns], axis=1) 
+    # net["pore.concentration_old"] = c.copy()
+    # conns = net["throat.conns"]
+    # net["throat.concentration_old"] = jnp.average(c[conns], axis=1) 
     # net["pore.concentration"] = c
     # net["pore.potential"] = phi
 
