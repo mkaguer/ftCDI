@@ -19,6 +19,7 @@ from jax import lax
 import pnmlib.models as mods
 import models.jax as models
 from pnmlib.network import create_adjacency_matrix, graph_laplacian
+from jax import lax
 
 
 from jax import config
@@ -322,6 +323,7 @@ def _update_charge_conductance(network, c):
 
     # update ionic conductance
     network["throat.ionic_conductance"] = K
+    
 
 
 def linear_map(A, V, dt):
@@ -366,10 +368,229 @@ phi = net["pore.potential"]
 c_mi = net["pore.micro_concentration"]
 phi_d = net["pore.donnan_potential"]
 
+
+def charge_solve(network,
+                 phi0,
+                 c,
+                 phi,
+                 V,
+                 dt,
+                 tol=1e-6,
+                 atol=0.0,
+                 maxiter=50,
+                 p_tol=1e-8,
+                 p_max_iter=10,
+                 w=1.0):
+    """
+    
+    An implicit solver written in JAX. It is jittable using jax.jit()
+
+    Parameters
+    ----------
+    network : dict
+        Network Dictionary
+    fun : callable function
+        Function of the form A, b = fun(network)
+    phi0 : ndarray
+        initial condition of potential field
+    c : ndarray
+        most recent concentration field
+    phi : ndarray
+        most recent potential field
+    V : ndarray
+        volumes used in transient solve
+    dt : float
+        time step to take in transient solve
+    tol : float, optional
+        GMRES tolerance. The default is 1e-6.
+    atol : float, optional
+        GMRES absolute. The default is 0.0.
+    maxiter : int, optional
+        GMRES max iterations. The default is 50.
+    p_tol : float, optional
+        picard tolerance. The default is 1e-8.
+    p_max_iter : float, optional
+        picard max iterations. The default is 10.
+    w : float, optional
+        damping parameter, value must be between 0 and 1. the default is 1.0.
+
+    Returns
+    -------
+    phi : ndarray
+        Solved potential field
+
+    """
+    
+    def linear_map(A, V, dt):
+        def matvec(x):
+            return A @ x + V/dt * x
+        return matvec
+
+    
+    def body(state):
+        
+        # get state
+        phi, p_iter, p_res = state
+        
+        # update counter
+        p_iter += 1
+        
+        # update charge source term
+        _update_charge_source(network, c, phi)
+        
+        # get A and b
+        Ac, bc = _get_charge_A_and_b(network)
+        matvec = linear_map(Ac, V, dt)
+        bc_t = bc + CaV*phi0/dt  # get bc transient
+        
+        # solve for phi
+        phi_new, _ = jax.scipy.sparse.linalg.gmres(
+            matvec,
+            bc_t,
+            x0=phi,
+            tol=tol,
+            atol=atol,
+            maxiter=maxiter
+        )
+        
+        # calculate p_res
+        p_res = jnp.linalg.norm(phi_new - phi)
+        # print(p_res)
+        
+        # apply damping
+        phi = w * phi_new + (1-w) * phi
+        
+        return (phi, p_iter, p_res)
+    
+        
+    def cond(state):
+        _, p_iter, p_res = state
+        return jnp.logical_and(p_res > p_tol,
+                               p_iter < p_max_iter)
+        
+    
+    p_iter, p_res = 0, 1.0 
+    state = (phi, p_iter, p_res)
+    phi, _, _ = lax.while_loop(cond, body, state)
+    
+    
+    return phi
+
+
+def mass_solve(network,
+               c0,
+               c,
+               phi,
+               V,
+               dt,
+               tol=1e-6,
+               atol=0.0,
+               maxiter=50,
+               p_tol=1e-8,
+               p_max_iter=10,
+               w=1.0):
+    """
+    
+    An implicit solver written in JAX. It is jittable using jax.jit()
+
+    Parameters
+    ----------
+    network : dict
+        Network Dictionary
+    c0 : ndarray
+        initial condition of concentration field
+    c : ndarray
+        most recent concentration field
+    phi : ndarray
+        most recent potential field
+    V : ndarray
+        volumes used in transient solve
+    dt : float
+        time step to take in transient solve
+    tol : float, optional
+        GMRES tolerance. The default is 1e-6.
+    atol : float, optional
+        GMRES absolute. The default is 0.0.
+    maxiter : int, optional
+        GMRES max iterations. The default is 50.
+    p_tol : float, optional
+        picard tolerance. The default is 1e-8.
+    p_max_iter : float, optional
+        picard max iterations. The default is 10.
+    w : float, optional
+        damping parameter, value must be between 0 and 1. the default is 1.0.
+
+    Returns
+    -------
+    c : ndarray
+        Solved concentration field
+
+    """
+    
+    def linear_map(A, V, dt):
+        def matvec(x):
+            return A @ x / V + 1/dt * x
+        return matvec
+
+    
+    def body(state):
+        
+        # get state
+        c, p_iter, p_res = state
+        
+        # update counter
+        p_iter += 1
+        
+        # update charge source term
+        _update_mass_source(network, c, phi)
+        
+        # get A and b
+        Am, bm = _get_mass_A_and_b(network)
+        matvec = linear_map(Am, V, dt)
+        bm_t = bm / V + c0 / dt
+        
+        # solve for c
+        c_new, _ = jax.scipy.sparse.linalg.gmres(
+            matvec,
+            bm_t,
+            x0=c0,
+            tol=tol,
+            atol=atol,
+            maxiter=maxiter
+        )
+        
+        # calculate p_res
+        p_res = jnp.linalg.norm(c_new - c)
+        # print(p_res)
+        
+        # apply damping
+        c = w * c_new + (1-w) * c
+        
+        return (c, p_iter, p_res)
+    
+        
+    def cond(state):
+        _, p_iter, p_res = state
+        return jnp.logical_and(p_res > p_tol,
+                               p_iter < p_max_iter)
+        
+    
+    p_iter, p_res = 0, 1.0 
+    state = (c, p_iter, p_res)
+    c, _, _ = lax.while_loop(cond, body, state)
+    
+    
+    return c
+
+
+charge_solve = jax.jit(charge_solve)
+mass_solve = jax.jit(mass_solve)
+
+
 # time stepping
 t0 = 0
 dt = dt
-tf = dt*1
+tf = dt*10
 # store solution for first time!
 y = jnp.concatenate((c, phi, c_mi, phi_d))
 x = jnp.array([t0])
@@ -387,58 +608,34 @@ for t in jnp.arange(t0+dt, tf+dt, dt):
     g_max_iter = 20
     for g_iter in range(g_max_iter):
         print(f"Gummel Iteration No. {g_iter+1}")
-        # solve phi, until residual small
-        # define picard convergence
-        p_tol = 1e-8
-        p_res = 1.0
-        p_max_iter = 10
-        p_iter = 0
-        # solve charge Ac @ phi = bc using gmres
-        phi_k = phi_old  # initialize phi_k
-        while jnp.logical_and(p_res > p_tol, p_iter < p_max_iter):
-            # count iters
-            p_iter += 1
-            # update charge source term
-            _update_charge_source(net, c, phi)  # FIXME: make more clear by passing in c and phi!
-            # get Ac and bc
-            Ac, bc = _get_charge_A_and_b(net)
-            matvec = linear_map(Ac, CaV, dt)
-            # get bc transient
-            bc_t = bc + CaV*phi0/dt
-            # solve for phi
-            phi_new, info1 = jax.scipy.sparse.linalg.gmres(
-                matvec,
-                bc_t,
-                x0=phi_k,
-                tol=1e-6,
-                maxiter=50
-            )
-            # calculate p_res
-            p_res = jnp.linalg.norm(phi_new - phi_k)
-            print(p_res)
-            # apply damping
-            w = 1.0
-            phi = w * phi_new + (1-w) * phi_k
-            # set new phi_k
-            phi_k = phi
+        # solve phi, using picard iterations!
+        phi = charge_solve(net,
+                           phi0=phi0,
+                           c=c,
+                           phi=phi,
+                           V=CaV,
+                           dt=dt,
+                           tol=1e-6,
+                           atol=0.0,
+                           maxiter=50,
+                           p_tol=1e-8,
+                           p_max_iter=10,
+                           w=1.0)
         # update potential
         net["pore.potential"] = phi
         # solve c, once!
-        # update mass source term, using most recent c
-        _update_mass_source(net, c, phi)  # FIXME: make more clear by passing in c and phi!
-        # get Am and bm
-        Am, bm = _get_mass_A_and_b(net)
-        matvec = linear_map2(Am, V, dt)  # This was important when source terms vanished!
-        # get bm transient
-        bm_t = bm / V + c0/dt
-        # solve for c
-        c_new, info2 = jax.scipy.sparse.linalg.gmres(
-            matvec,
-            bm_t,
-            x0=c0,
-            tol=1e-6,
-            maxiter=50
-        )
+        c_new = mass_solve(net,
+                           c0=c0,
+                           c=c,
+                           phi=phi,
+                           V=V,
+                           dt=dt,
+                           tol=1e-6,
+                           atol=0.0,
+                           maxiter=50,
+                           p_tol=1e-8,
+                           p_max_iter=1,
+                           w=1.0)
         # apply damping
         w = 0.5
         c = w * c_new + (1 - w) * c_old
@@ -460,6 +657,9 @@ for t in jnp.arange(t0+dt, tf+dt, dt):
         # update old c and phi
         c_old = c.copy()
         phi_old = phi.copy()
+    # update source terms on net
+    _update_mass_source(net, c, phi)
+    _update_charge_source(net, c, phi)
     # calculate effective micro concentrations
     model = models.electrical_double_layer.micro_concentration_eff
     c_mi = model(R=net["pore.mass_source_effective"],
@@ -486,8 +686,41 @@ c_mi = c_mi[net["pore.micropore"]]
 mf = jnp.dot(c, V) + jnp.dot(c_mi/2, V_mi)
 
 # calculate mass balance error
-print(f"Mass Balance Error: {abs(mf-m0)/m0*100}%")  # 0.019293119627498672%
-print(jnp.average(c))  # 5.152738347410915
-print(jnp.average(abs(phi)))  # 0.23558853827546888
+print(f"Mass Balance Error: {abs(mf-m0)/m0*100}%")  # 0.003222084192365171%
+print(jnp.average(c))  # 3.4021454173744243
+print(jnp.average(abs(phi)))  # 0.23017045450696103
 
-xx
+'''
+p_tol = 1e-8
+p_res = 1.0
+p_max_iter = 10
+p_iter = 0
+# solve charge Ac @ phi = bc using gmres
+phi_k = phi_old  # initialize phi_k
+while jnp.logical_and(p_res > p_tol, p_iter < p_max_iter):
+    # count iters
+    p_iter += 1
+    # update charge source term
+    _update_charge_source(net, c, phi)  # FIXME: make more clear by passing in c and phi!
+    # get Ac and bc
+    Ac, bc = _get_charge_A_and_b(net)
+    matvec = linear_map(Ac, CaV, dt)
+    # get bc transient
+    bc_t = bc + CaV*phi0/dt
+    # solve for phi
+    phi_new, info1 = jax.scipy.sparse.linalg.gmres(
+        matvec,
+        bc_t,
+        x0=phi_k,
+        tol=1e-6,
+        maxiter=50
+    )
+    # calculate p_res
+    p_res = jnp.linalg.norm(phi_new - phi_k)
+    print(p_res)
+    # apply damping
+    w = 1.0
+    phi = w * phi_new + (1-w) * phi_k
+    # set new phi_k
+    phi_k = phi
+'''
