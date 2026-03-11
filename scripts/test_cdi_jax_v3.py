@@ -7,24 +7,17 @@ import sys
 sys.path.append(r"D:\OneDrive\UW files\code\mypnmlib")
 
 import openpnm as op
-import numpy as _np
 import jax.numpy as jnp
 from jax import config
 import pnmlib as pnm
 import collection.jax as co
-from collections import ChainMap
 import properties as prpts
 import jax
 from jax import lax
-import pnmlib.models as mods
 import models.jax as models
-from pnmlib.network import create_adjacency_matrix, graph_laplacian
-from jax import lax
 
 
-from jax import config
 config.update("jax_disable_jit", False)
-
 config.update("jax_enable_x64", True)
 
 # create network
@@ -177,11 +170,6 @@ def _get_mass_A_and_b(network):
     pnm.algorithms.set_source(proj, alg="alg2",
                               pores=net["pore.micropore"],
                               propname="mass_source_effective")
-    
-    # set BCs
-    # pores=net["pore.xmin"]
-    # pnm.algorithms.set_BC(proj, "alg2", pores, bctype='value',
-                          # bcvalues=cf, mode="overwrite")
 
     # build A and b
     mt["A"] = pnm.algorithms.build_A(proj, "alg2")
@@ -189,9 +177,6 @@ def _get_mass_A_and_b(network):
 
     # apply sources
     mt["A"], mt["b"] = pnm.algorithms.apply_sources(proj, alg="alg2")
-    
-    # apply BCs
-    # mt["A"], mt["b"] = pnm.algorithms.apply_BC(proj, alg="alg2")
     
     return mt["A"], mt["b"]
 
@@ -686,9 +671,9 @@ c_mi = c_mi[net["pore.micropore"]]
 mf = jnp.dot(c, V) + jnp.dot(c_mi/2, V_mi)
 
 # calculate mass balance error
-print(f"Mass Balance Error: {abs(mf-m0)/m0*100}%")  # 0.003222084192365171%
-print(jnp.average(c))  # 3.4021454173744243
-print(jnp.average(abs(phi)))  # 0.23017045450696103
+print(f"Mass Balance Error: {abs(mf-m0)/m0*100}%")  # 0.04142848214403494%  @ 1s
+print(jnp.average(c))  # 0.11375381915642666
+print(jnp.average(abs(phi)))  # 0.016492790763054866
 
 '''
 p_tol = 1e-8
