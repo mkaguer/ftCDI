@@ -248,10 +248,10 @@ def _get_mass_A_and_b(network):
                                   throats=throats, mode="overwrite")
 
     # set source
-    mt["sources"] = ["mass_source_effective"]
+    mt["sources"] = ["mass_source"]
     pnm.algorithms.set_source(proj, alg="alg2",
                               pores=net["pore.micropore"],
-                              propname="mass_source_effective")
+                              propname="mass_source")
 
     # build A and b
     mt["A"] = pnm.algorithms.build_A(proj, "alg2")
@@ -332,7 +332,9 @@ def _update_mass_source(network, c, phi):
                      c_mi_i=network["pore.micro_concentration_old"],
                      V_mi=network["pore.micro_volume"],
                      dt=network["time_step"])
-    network["pore.mass_source_effective"] = Rm
+    network["pore.mass_source"] = Rm
+    
+    return phi_d, c_mi, Rm
 
 
 def _update_charge_source(network, c, phi):
@@ -359,6 +361,8 @@ def _update_charge_source(network, c, phi):
 
     # update charge source term
     network["pore.charge_source"] = Rc
+    
+    return phi_d, Rc
 
 
 def _update_charge_conductance(network, c):
@@ -382,6 +386,8 @@ def _update_charge_conductance(network, c):
 
     # update ionic conductance
     network["throat.ionic_conductance"] = K
+    
+    return K
 
 
 def charge_solve(network,
@@ -593,6 +599,8 @@ def mass_solve(network,
 charge_solve = jax.jit(charge_solve)
 mass_solve = jax.jit(mass_solve)
 
+_update_mass_source_jitted = jax.jit(_update_mass_source)
+_update_charge_conductance_jitted = jax.jit(_update_charge_conductance)
 
 # calculate initial mass
 c_mi = net["pore.micro_concentration"][net["pore.micropore"]]
@@ -613,7 +621,7 @@ V = net["pore.effective_volume"]
 # get capacitance
 C = net["pore.capacitance"]
 a = net["pore.surface_area"]
-V = net["pore.effective_volume"]
+V = net["pore.effective_volume"]  # FIXME: this should be micro I think!
 CaV = jnp.where(net["pore.micropore"], C*a*V, 0.0)
 
 
@@ -635,7 +643,7 @@ for t in jnp.arange(t0+dt, tf+0.9*dt, dt):
     # define gummel convergence
     g_res = jnp.array([10000.0, 1000.0])
     g_tol = jnp.array([1e-5, 1e-5])
-    g_max_iter = 100
+    g_max_iter = 40
     w = 0.15
     a = 0.15
     for g_iter in range(g_max_iter):
@@ -674,7 +682,8 @@ for t in jnp.arange(t0+dt, tf+0.9*dt, dt):
         c = w * c_new + (1 - w) * c_old
         net["pore.concentration"] = c
         # update ionic conductance
-        _update_charge_conductance(net, c)
+        K = _update_charge_conductance_jitted(net, c)
+        net["throat.ionic_conductance"] = K
         # calculate new residual
         if g_iter > 0:
             g_res = jnp.array([jnp.sum((c - c_old)**2),
@@ -690,8 +699,11 @@ for t in jnp.arange(t0+dt, tf+0.9*dt, dt):
         c_old = c.copy()
         phi_old = phi.copy()
     # update source terms on net
-    _update_mass_source(net, c, phi)  # FIXME: these are slow!!
-    _update_charge_source(net, c, phi)
+    phi_d, c_mi, Rm = _update_mass_source_jitted(net, c, phi)  # FIXME: these are slow!!
+    net["pore.donnan_potential"] = phi_d
+    net["pore.micro_concentration"] = c_mi
+    # net["pore.mass_source"] = Rm
+    # _update_charge_source(net, c, phi)
     # update old concentrations
     net["pore.donnan_potential_old"] = net["pore.donnan_potential"].copy()
     net["pore.micro_concentration_old"] = net["pore.micro_concentration"].copy()
