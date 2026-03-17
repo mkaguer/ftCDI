@@ -1,6 +1,8 @@
 """
 
-Segregated solves!
+Segregated solves! JITTED!
+
+Got it working on small 10 by 10 network! YAY!
 
 """
 import sys
@@ -86,7 +88,7 @@ rho_sep = prpts.properties["rho_sep"]
 rho_mi = prpts.properties["rho_mi"]
 V_cell = prpts.properties["V_cell"]
 Ca = prpts.properties["Ca"]
-mu_att = prpts.properties["mu_att"]
+mu_att = 1.0  # prpts.properties["mu_att"]
 P_in = prpts.properties["P_in"]
 P_out = prpts.properties["P_out"]
 cf = prpts.properties["cf"]
@@ -231,7 +233,7 @@ def _update_mass_source(network, c, phi):
                              T=network["pore.temperature"],
                              C=network["pore.capacitance"],
                              a=network["pore.surface_area"])
-    network["pore.donnan_potential"] = phi_d  # FIXME: can I do this?
+    network["pore.donnan_potential"] = phi_d
     
     # calculate micropore concentration
     model = models.electrical_double_layer.micropore_concentration
@@ -239,7 +241,7 @@ def _update_mass_source(network, c, phi):
                  phi_d=network["pore.donnan_potential"],
                  T=network["pore.temperature"],
                  mu_att=network["pore.attraction_term"])
-    network["pore.micro_concentration"] = c_mi  # FIXME: can I do this?
+    network["pore.micro_concentration"] = c_mi
 
     # update mass source
     mass_source = models.electrical_double_layer.mass_source
@@ -272,7 +274,7 @@ def _update_charge_source(network, c, phi):
                              T=network["pore.temperature"],
                              C=network["pore.capacitance"],
                              a=network["pore.surface_area"])
-    network["pore.donnan_potential"] = phi_d  # FIXME: can I do this?
+    network["pore.donnan_potential"] = phi_d
 
     # update charge source
     charge_source = models.electrical_double_layer.charge_source
@@ -426,7 +428,7 @@ def charge_solve(network,
         # get A and b
         Ac, bc = _get_charge_A_and_b(network)
         matvec = linear_map(Ac, V, dt)
-        bc_t = bc + CaV*phi0/dt  # get bc transient
+        bc_t = bc + V*phi0/dt  # get bc transient
         
         # solve for phi
         phi_new, _ = jax.scipy.sparse.linalg.gmres(
@@ -674,38 +676,3 @@ mf = jnp.dot(c, V) + jnp.dot(c_mi/2, V_mi)
 print(f"Mass Balance Error: {abs(mf-m0)/m0*100}%")  # 0.04142848214403494%  @ 1s
 print(jnp.average(c))  # 0.11375381915642666
 print(jnp.average(abs(phi)))  # 0.016492790763054866
-
-'''
-p_tol = 1e-8
-p_res = 1.0
-p_max_iter = 10
-p_iter = 0
-# solve charge Ac @ phi = bc using gmres
-phi_k = phi_old  # initialize phi_k
-while jnp.logical_and(p_res > p_tol, p_iter < p_max_iter):
-    # count iters
-    p_iter += 1
-    # update charge source term
-    _update_charge_source(net, c, phi)  # FIXME: make more clear by passing in c and phi!
-    # get Ac and bc
-    Ac, bc = _get_charge_A_and_b(net)
-    matvec = linear_map(Ac, CaV, dt)
-    # get bc transient
-    bc_t = bc + CaV*phi0/dt
-    # solve for phi
-    phi_new, info1 = jax.scipy.sparse.linalg.gmres(
-        matvec,
-        bc_t,
-        x0=phi_k,
-        tol=1e-6,
-        maxiter=50
-    )
-    # calculate p_res
-    p_res = jnp.linalg.norm(phi_new - phi_k)
-    print(p_res)
-    # apply damping
-    w = 1.0
-    phi = w * phi_new + (1-w) * phi_k
-    # set new phi_k
-    phi_k = phi
-'''

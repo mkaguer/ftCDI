@@ -1,3 +1,12 @@
+"""
+
+Good proof of concept but not jitted!
+
+"""
+# FIXME: remove?
+import sys
+sys.path.append(r"D:\OneDrive\UW files\code\mypnmlib")
+
 import openpnm as op
 import numpy as _np
 import jax.numpy as jnp
@@ -15,10 +24,6 @@ from pnmlib.network import create_adjacency_matrix, graph_laplacian
 
 from jax import config
 config.update("jax_disable_jit", False)
-
-# FIXME: remove?
-import sys
-sys.path.append(r"D:\OneDrive\UW files\code\mypnmlib")
 
 config.update("jax_enable_x64", True)
 
@@ -88,7 +93,7 @@ rho_sep = prpts.properties["rho_sep"]
 rho_mi = prpts.properties["rho_mi"]
 V_cell = prpts.properties["V_cell"]
 Ca = prpts.properties["Ca"]
-mu_att = prpts.properties["mu_att"]
+mu_att = 1.0  # prpts.properties["mu_att"]
 P_in = prpts.properties["P_in"]
 P_out = prpts.properties["P_out"]
 cf = prpts.properties["cf"]
@@ -124,12 +129,12 @@ phi = jnp.where(net["pore.anode"], V_cell/2, 0.0)
 phi = jnp.where(net["pore.cathode"], -V_cell/2, phi)
 net["pore.potential"] = phi
 net["pore.electrode_potential"] = phi
-net["pore.attraction_term"] = jnp.zeros(Np)  # jnp.where(net["pore.micropore"], mu_att, 0.0)
+net["pore.attraction_term"] = jnp.where(net["pore.micropore"], mu_att, 0.0)
 net["pore.capacitance"] = jnp.where(net["pore.micropore"], Ca, 1.0)
 net["pore.surface_area"] = jnp.ones(Np)*1
 
 # select time step
-dt = 0.1
+dt = 0.001
 net["time_step"] = dt
 
 # set iniital guess for donnan potential
@@ -168,10 +173,10 @@ def _get_mass_A_and_b(network):
     mt["pore_volume"] = "pore.effective_volume"
     
     # set source
-    mt["sources"] = ["mass_source_effective"]
+    mt["sources"] = ["mass_source"]
     pnm.algorithms.set_source(proj, alg="alg2",
                               pores=net["pore.micropore"],
-                              propname="mass_source_effective")
+                              propname="mass_source")
 
     # build A and b
     mt["A"] = pnm.algorithms.build_A(proj, "alg2")
@@ -220,6 +225,257 @@ def _get_charge_A_and_b(network):
     ct["A"], ct["b"] = pnm.algorithms.apply_BC(proj, alg="alg3")
     
     return ct["A"], ct["b"]
+
+
+def _update_mass_source(network, c, phi):
+    
+    # update donnan potential
+    donnan_potential = models.electrical_double_layer.donnan_potential
+    phi_d0 = network["pore.donnan_potential_old"]
+    phi_d = donnan_potential(phi_d0, phi, c,
+                             phi_e=network["pore.electrode_potential"],
+                             mu_att=network["pore.attraction_term"],
+                             T=network["pore.temperature"],
+                             C=network["pore.capacitance"],
+                             a=network["pore.surface_area"])
+    network["pore.donnan_potential"] = phi_d  # FIXME: can I do this?
+    
+    # calculate micropore concentration
+    model = models.electrical_double_layer.micropore_concentration
+    c_mi = model(c,
+                 phi_d=network["pore.donnan_potential"],
+                 T=network["pore.temperature"],
+                 mu_att=network["pore.attraction_term"])
+    network["pore.micro_concentration"] = c_mi  # FIXME: can I do this?
+
+    # update mass source
+    mass_source = models.electrical_double_layer.mass_source
+    Rm = mass_source(c_mi,
+                     c_mi_i=network["pore.micro_concentration_old"],
+                     V_mi=network["pore.micro_volume"],
+                     dt=network["time_step"])
+    
+    # update mass source effective
+    mass_source_eff = models.electrical_double_layer.mass_source_effective
+    Rm_e = mass_source_eff(Rm,
+                           c=network["pore.concentration_old"],
+                           V=network["pore.volume"],  # FIXME: effective?
+                           dt=network["time_step"])
+    
+    # update mass source term
+    network["pore.mass_source"] = Rm_e
+
+
+def _update_charge_source(network, c, phi):
+
+    # update donnan potential
+    donnan_potential = models.electrical_double_layer.donnan_potential
+    phi_d0 = network["pore.donnan_potential_old"]
+    phi_d = donnan_potential(phi_d0, phi, c,
+                             phi_e=network["pore.electrode_potential"],
+                             mu_att=network["pore.attraction_term"],
+                             T=network["pore.temperature"],
+                             C=network["pore.capacitance"],
+                             a=network["pore.surface_area"])
+    network["pore.donnan_potential"] = phi_d  # FIXME: can I do this?
+
+    # update charge source
+    charge_source = models.electrical_double_layer.charge_source
+    Rc = charge_source(phi_d,
+                       phi_d_i=network["pore.donnan_potential_old"],
+                       C=network["pore.capacitance"],
+                       a=network["pore.surface_area"],
+                       V=network["pore.effective_volume"],
+                       dt=network["time_step"])
+
+    # update charge source term
+    network["pore.charge_source"] = Rc
+
+
+def _update_charge_conductance(network, c):
+
+    # get conns
+    conns = network["throat.conns"]
+
+    # update ionic conductivity (pore and throat)
+    conductivity = models.electrical_double_layer.conductivity
+    Kp = conductivity(c=c,
+                      D=network["pore.diffusivity"],
+                      T=network["pore.temperature"])
+    Kt = conductivity(c=jnp.average(c[conns], axis=1),
+                      D=network["throat.diffusivity"],
+                      T=network["throat.temperature"])
+
+    # calculate ionic conductance
+    poisson_conductance = models.electrical_double_layer.poisson_conductance
+    K = poisson_conductance(network, Kp, Kt,
+                            sf=network["throat.diffusive_size_factors"])
+
+    # update ionic conductance
+    network["throat.ionic_conductance"] = K
+
+
+def linear_map(A, V, dt):
+    def matvec(x):
+        return A @ x + V/dt * x
+    return matvec
+
+
+def residual(A, b, x, x_prev, V, dt):
+    
+    # backward euler
+    F = V*(x - x_prev)/dt - (-A @ x + b)
+    
+    return F
+
+
+# get volume
+V = net["pore.effective_volume"]
+
+# get capacitance
+C = net["pore.capacitance"]
+a = net["pore.surface_area"]
+V = net["pore.effective_volume"]
+CaV = jnp.where(net["pore.micropore"], C*a*V, 0.0)
+
+# calculate initial mass
+c_mi = net["pore.micro_concentration"][net["pore.micropore"]]
+V_mi = net["pore.micro_volume"][net["pore.micropore"]]
+c = net["pore.concentration"]
+V = net["pore.volume"]
+m0 = jnp.dot(c, V) + jnp.dot(c_mi/2, V_mi)
+
+# get c, phi, c_mi, phi_d
+c = net["pore.concentration"]
+phi = net["pore.potential"]
+c_mi = net["pore.micro_concentration"]
+phi_d = net["pore.donnan_potential"]
+
+# time stepping
+t0 = 0
+dt = dt
+tf = dt
+# store solution for first time!
+y = jnp.concatenate((c, phi, c_mi, phi_d))
+x = jnp.array([t0])
+for t in jnp.arange(t0+dt, tf+dt, dt):
+    print(f"Time: {t}s")
+    # get initial conditions
+    c0 = c.copy()
+    phi0 = phi.copy()
+    # initialize c_old and phi_old
+    c_old = c0.copy()
+    phi_old = phi0.copy()
+    # define gummel convergence
+    g_res = jnp.array([100.0, 100.0])
+    g_tol = jnp.array([1e-4, 1e-4])
+    g_max_iter = 20
+    for g_iter in range(g_max_iter):
+        print(f"Gummel Iteration No. {g_iter+1}")
+        # solve phi, until residual small
+        # define picard convergence
+        p_tol = 1e-8
+        p_res = 1.0
+        p_max_iter = 10
+        p_iter = 0
+        # solve charge Ac @ phi = bc using gmres
+        phi_k = phi_old  # initialize phi_k
+        while jnp.logical_and(p_res > p_tol, p_iter < p_max_iter):
+            # count iters
+            p_iter += 1
+            # update charge source term
+            _update_charge_source(net, c, phi)  # FIXME: make more clear by passing in c and phi!
+            # get Ac and bc
+            Ac, bc = _get_charge_A_and_b(net)
+            matvec = linear_map(Ac, CaV, dt)
+            # get bc transient
+            bc_t = bc + CaV*phi0/dt
+            # solve for phi
+            phi_new, _ = jax.scipy.sparse.linalg.gmres(
+                matvec,
+                bc_t,
+                x0=phi_k,
+                tol=1e-6,
+                maxiter=50
+            )
+            # calculate p_res
+            p_res = jnp.linalg.norm(phi_new - phi_k)
+            print(p_res)
+            # apply damping
+            w = 1.0
+            phi = w * phi_new + (1-w) * phi_k
+            # set new phi_k
+            phi_k = phi
+        # update potential
+        net["pore.potential"] = phi
+        # solve c, once!
+        # update mass source term, using most recent c
+        _update_mass_source(net, c, phi)  # FIXME: make more clear by passing in c and phi!
+        # get Am and bm
+        Am, bm = _get_mass_A_and_b(net)
+        matvec = linear_map(Am, V, dt)
+        # get bm transient
+        bm_t = bm + V*c0/dt
+        # solve for c
+        c_new, _ = jax.scipy.sparse.linalg.gmres(
+            matvec,
+            bm_t,
+            x0=c0,
+            tol=1e-6,
+            maxiter=50
+        )
+        # apply damping
+        w = 0.5
+        c = w * c_new + (1 - w) * c_old
+        # update concentration
+        net["pore.concentration"] = c
+        # update ionic conductance
+        _update_charge_conductance(net, c)
+        # calculate new residual
+        if g_iter > 0:
+            g_res = jnp.array([jnp.sum((c - c_old)**2),
+                               jnp.sum((phi - phi_old)**2)])
+        print(f"  Residual: {g_res}")
+        if jnp.all(g_res < g_tol):
+            print(f"  Convergence criteria met: {g_res}")
+            break
+        # break if max no. of iterations reached
+        if g_iter == g_max_iter - 1:
+            break
+        # update old c and phi
+        c_old = c.copy()
+        phi_old = phi.copy()
+    # calculate effective micro concentrations
+    model = models.electrical_double_layer.micro_concentration_eff
+    c_mi = model(R=net["pore.mass_source"],
+                 c_mi_i=net["pore.micro_concentration_old"],
+                 V=net["pore.micro_volume"],
+                 dt=net["time_step"])
+    net["pore.micro_concentration"] = c_mi
+    # update old concentrations
+    net["pore.donnan_potential_old"] = net["pore.donnan_potential"].copy()
+    net["pore.micro_concentration_old"] = net["pore.micro_concentration"].copy()
+    # set "old" concentrations
+    net["pore.concentration_old"] = net["pore.concentration"].copy()
+    # get c, phi, c_mi, phi_d
+    c = net["pore.concentration"]
+    phi = net["pore.potential"]
+    c_mi = net["pore.micro_concentration"]
+    phi_d = net["pore.donnan_potential"]
+    # save results as y and x, assume that everything gets saved!
+    y = jnp.vstack((y, jnp.concatenate((c, phi, c_mi, phi_d))))
+    x = jnp.concatenate((x, jnp.array([t])))
+
+# calculate final mass
+c_mi = c_mi[net["pore.micropore"]]
+mf = jnp.dot(c, V) + jnp.dot(c_mi/2, V_mi)
+
+# calculate mass balance error
+print(f"Mass Balance Error: {abs(mf-m0)/m0*100}%")  # 0.019293119627498672%
+print(jnp.average(c))  # 5.152738347410915
+print(jnp.average(abs(phi)))  # 0.23558853827546888
+
+xx
 
 
 def fun(network, u):
@@ -278,7 +534,7 @@ def fun(network, u):
     Rc = charge_source(phi_d,
                        phi_d_i=network["pore.donnan_potential_old"],
                        C=network["pore.capacitance"],
-                       a=network["pore.attraction_term"],
+                       a=network["pore.surface_area"],  # FIXME: this was attraction term!!
                        V=network["pore.volume"],
                        dt=network["time_step"])
     network["pore.charge_source"] = Rc
@@ -523,14 +779,88 @@ for t in jnp.arange(t0+dt, tf+dt, dt):
     # net["pore.concentration"] = c
     # net["pore.potential"] = phi
 
-# calculate final mass
-c_mi = c_mi[net["pore.micropore"]]
-mf = jnp.dot(c, V) + jnp.dot(c_mi/2, V_mi)
 
-# calculate mass balance error
-print(f"Mass Balance Error: {abs(mf-m0)/m0*100}%")  # 0.00010472375798286593%
-print(jnp.average(c))  # 0.681904403267796
-print(jnp.average(abs(phi)))  # 0.020685176432581213
+
+'''
+print(f"Gummel Iteration No. {g_iter+1}")
+# define picard convergence
+p_tol = 1e-8
+p_res = 1.0
+p_max_iter = 2
+p_iter = 0
+# solve mass Am @ c = bm using gmres
+w = 1.0
+c_k = c_old  # initialize c_k
+# while p_res > p_tol:
+while jnp.logical_and(p_res > p_tol, p_iter < p_max_iter):  # FIXME: add max iter!
+    # count
+    p_iter += 1
+    # update mass source term, using most recent c
+    _update_mass_source(net, c)
+    # get Am and bm
+    Am, bm = _get_mass_A_and_b(net)
+    matvec = linear_map(Am, V, dt)
+    # get bm transient
+    bm_t = bm + V*c0/dt
+    # solve for c
+    c, _ = jax.scipy.sparse.linalg.gmres(
+        matvec,
+        bm_t,
+        x0=c0,
+        tol=1e-6,
+        maxiter=50
+    )
+    # calculate p_res
+    p_res = jnp.linalg.norm(c - c_k)
+    print(p_res)
+    # apply damping
+    c_new = w*c + (1-w)*c_k  # FIXME: add line search to keep c > 0
+    while jnp.any(c_new < 0):
+        w *= 0.5
+        c_new = w*c + (1-w)*c_k
+    # set c 
+    c = c_new
+    # set new c_k
+    c_k = c
+# update c
+net["pore.concentration"] = c
+# update ionic conductane
+# calculate cmi, mass_source, update b, and re-calculate c
+# stop calculating c when c stops chaning, this is a picard iteration
+# A picard iteration is A(x)x = b(x), our A is constant but b is dependent on x
+# this is why reaction can go negative, this will fix it!
+# define picard convergence
+p_tol = 1e-8
+p_res = 1.0
+# solve charge Ac @ phi = bc using gmres
+phi_k = phi_old  # initialize phi_k
+while p_res > p_tol:  # FIXME: add max iter
+    # update charge source term
+    _update_charge_source(net, phi)
+    # get Ac and bc
+    Ac, bc = _get_charge_A_and_b(net)
+    matvec = linear_map(Ac, CaV, dt)
+    # get bc transient
+    bc_t = bc + CaV*phi0/dt
+    # solve for phi
+    phi, _ = jax.scipy.sparse.linalg.gmres(
+        matvec,
+        bc_t,
+        x0=phi0,
+        tol=1e-6,
+        maxiter=50
+    )
+    # calculate p_res
+    p_res = jnp.linalg.norm(phi - phi_k)
+    print(p_res)
+    # set new phi_k
+    phi_k = phi  # FIXME: add damping!?
+    # res = residual(Ac, bc, phi, phi0, CaV, dt)/jnp.linalg.norm(CaV)
+    # print(res)
+'''
+
+
+
 
 '''
 def time_step(i, us):
