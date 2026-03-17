@@ -66,7 +66,7 @@ def donnan_potential(phase,
     
     # use fsolve to find the donnan potential
     phi_d0 = phase["pore.donnan_potential"]
-    phi_d0 = jnp.where(phi_d0==-1, 0, phi_d0)
+    # phi_d0 = jnp.where(phi_d0==-1, 0, phi_d0)
     # start = time.time()
     phi_d = pnm.optimize.newton_krylov(potential_balance, phi_d0, tol=6e-6)
     # stop = time.time()
@@ -78,7 +78,7 @@ def donnan_potential(phase,
 def micropore_concentration(phase,
                             pore_concentration="pore.concentration",
                             pore_donnan_potential="pore.donnan_potential",
-                            pore_temperature="pore.temeprature",
+                            pore_temperature="pore.temperature",
                             pore_attraction_term="pore.attraction_term"):
     
     # set constants
