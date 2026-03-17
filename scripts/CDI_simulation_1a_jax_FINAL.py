@@ -23,7 +23,6 @@ import matplotlib.pyplot as plt
 import pnmlib.models as mods
 import models.jax as models
 from jax import lax
-import matplotlib.pyplot as plt
 
 config.update("jax_disable_jit", False)
 config.update("jax_enable_x64", True)
@@ -442,50 +441,6 @@ def _update_charge_conductance(network, c):
     return K
 
 
-def _update_geometry(network):
-    
-    # calculate diffusive size factors
-    model = models.diffusive_size_factors.custom
-    lambda_d = model(network,
-                     pore_diameter="pore.diameter",
-                     throat_diameter="throat.diameter",
-                     throat_zeta="throat.zeta")
-    lambda_d0 = network["throat.diffusive_size_factors"]
-    mask = network["throat.micropore"][:, jnp.newaxis]
-    lambda_d = jnp.where(mask, lambda_d, lambda_d0)
-    network["throat.diffusive_size_factors"] = lambda_d
-    
-    # FIXME: could remove this!
-    # update K, this gets updated when _update_charge_conductance is called!
-    model = mods.physics.diffusive_conductance.generic_diffusive
-    K = model(network,
-              pore_diffusivity="pore.conductivity",
-              throat_diffusivity="throat.conductivity",
-              size_factors="throat.diffusive_size_factors")
-    K0 = network["throat.ionic_conductance"]
-    mask = network["throat.micropore"][:, jnp.newaxis]
-    K = jnp.where(mask, K, K0)
-    network["throat.ionic_conductance"] = K
-    
-    # update Gd
-    model = mods.physics.diffusive_conductance.generic_diffusive
-    Gd = model(network,
-               pore_diffusivity="pore.diffusivity",
-               throat_diffusivity="throat.diffusivity",
-               size_factors="throat.diffusive_size_factors")
-    Gd0 = network["throat.mass_conductance"]
-    mask = network["throat.micropore"][:, jnp.newaxis]
-    Gd = jnp.where(mask, Gd, Gd0)
-    network["throat.mass_conductance"] = Gd
-    
-    # update effective volume
-    V0 = network["pore.effective_volume"]
-    V_mi = network["pore.micro_volume"]
-    zeta = mods.misc.from_neighbor_throats(network, "throat.zeta", mode="mean")
-    V = jnp.where(network["pore.micropore"], zeta*V_mi, V0)
-    network["pore.effective_volume"] = V
-
-
 def charge_solve(network,
                  phi0,
                  c,
@@ -711,8 +666,6 @@ phi = net["pore.potential"]
 c_mi = net["pore.micro_concentration"]
 phi_d = net["pore.donnan_potential"]
 
-# _update_geometry(net)
-
 # get volume
 V = net["pore.effective_volume"]
 
@@ -761,7 +714,6 @@ for t in jnp.arange(t0+dt, tf+0.9*dt, dt):
                                w=1.0)
         # update potential
         phi = a * phi_new + (1 - a) * phi_old  # critical to use phi0!
-        # phi.at[~net["pore.micropore"]].set(phi_new[~net["pore.micropore"]])
         net["pore.potential"] = phi
         # solve c, once!
         c_new = mass_solve(net,
@@ -776,26 +728,6 @@ for t in jnp.arange(t0+dt, tf+0.9*dt, dt):
                            p_tol=1e-8,
                            p_max_iter=1,  # If you increase, must use damping!
                            w=1.0)
-        '''
-        # update zeta
-        c_ma = c_new[conns[:, 0]]  # FIXME: assumes [ma, mi] in conns
-        c_mi = c_new[conns[:, 1]]
-        zeta0 = net["throat.zeta"]
-        mask = jnp.logical_and(c_mi > c_ma, c_mi * c_ma < 0)
-        zeta = jnp.where(~mask, -c_ma/(c_mi - c_ma) * zeta0, zeta0)
-        zeta = jnp.maximum(0.01, jnp.minimum(zeta, 1.0))
-        plt.hist(zeta[net["throat.micropore"]])
-        plt.show()
-        net["throat.zeta"] = jnp.where(net["throat.micropore"], zeta, 1.0)
-        print(jnp.sum(net["pore.effective_volume"][net["pore.micropore"]]))
-        _update_geometry(net)
-        print(jnp.sum(net["pore.effective_volume"][net["pore.micropore"]]))
-        # update CaV
-        C = net["pore.capacitance"]
-        a = net["pore.surface_area"]
-        V = net["pore.effective_volume"]
-        CaV = jnp.where(net["pore.micropore"], C*a*V, 0.0)
-        '''
         # update concentration
         c_new = jnp.clip(c_new, 1e-6, cf)
         c = w * c_new + (1 - w) * c_old
@@ -821,8 +753,6 @@ for t in jnp.arange(t0+dt, tf+0.9*dt, dt):
     phi_d, c_mi, Rm = _update_mass_source_jitted(net, c, phi)  # FIXME: these are slow!!
     net["pore.donnan_potential"] = phi_d
     net["pore.micro_concentration"] = c_mi
-    # net["pore.mass_source"] = Rm
-    # _update_charge_source(net, c, phi)
     # update old concentrations
     net["pore.donnan_potential_old"] = net["pore.donnan_potential"].copy()
     net["pore.micro_concentration_old"] = net["pore.micro_concentration"].copy()

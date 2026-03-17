@@ -1,3 +1,11 @@
+"""
+
+First attempt at writing an implicit solver in jax! Does not update A and b
+on the fly. We observed divergence after a few time steps.
+
+Doesn't work because we had to update pnm.algorithms
+
+"""
 import numpy as _np
 import openpnm as op
 import pnmlib as pnm
@@ -14,6 +22,10 @@ from algorithms import dae_solve_v2 as dae_solve
 import matplotlib.pyplot as plt
 
 config.update("jax_enable_x64", True)
+
+# FIXME: should be able to remove this!
+import sys
+sys.path.append(r"D:\OneDrive\UW files\code\mypnmlib")
 
 # create blank project dict
 proj = {}
@@ -299,6 +311,104 @@ dae_solve = jax.jit(dae_solve, static_argnames=static_argnames)
 
 is_transient=net["pore.micropore"]
 
+'''
+# time stepping
+t0 = 0
+dt = dt
+tf = 1.0
+# get propeties
+c = phase["pore.concentration"]
+phi = phase["pore.potential"]
+# get volume
+V = phase["pore.effective_volume"]
+# get capacitance
+C = phase["pore.capacitance"]
+a = phase["pore.surface_area"]
+CaV = C*a*V
+for t in jnp.arange(t0+dt, tf+dt, dt):
+    print(f"Time: {t}s")
+    # get initial condition
+    c0 = c.copy()
+    phi0 = phi.copy()
+    # choose starting c_old and phi_old
+    c_old = c.copy()
+    phi_old = phi.copy()
+    # initialize phi_guess
+    phi_guess = phi0.copy()
+    # define gummel convergence
+    g_res = jnp.array([100, 100])
+    g_tol = jnp.array([1e-4, 1e-8])
+    g_max_iter = 20
+    for g_iter in range(g_max_iter):
+        # solve mass balance
+        ts, ys = implicit_solve(rhs_mass,
+                                t_span=(0, dt),
+                                y0=c0,
+                                dt=dt,
+                                method="euler",
+                                args=(mt["A"], mt["b"], V),
+                                tol=1e-10,  # change to 1e-4 when scaled up
+                                iters=20,
+                                check_convergence=False)
+        c = ys[-1, :]
+        # solve charge balance
+        ts, ys = dae_solve(phi0,
+                           phi_guess=phi_guess,
+                           t_span=(0, dt),
+                           dt=dt/10,
+                           args=(ct["A"], ct["b"], CaV),
+                           is_transient=net["pore.micropore"],
+                           tol=1e-6,
+                           atol=1e-8,
+                           maxiter=100)
+        phi = ys[-1, :]
+        # update concentration and potential
+        # update phi_guess
+        phi_guess = phi
+        alpha = 0.8
+        c = (1-alpha)*c + alpha*c_old
+        phi = (1-alpha)*phi + alpha*phi_old
+        phase["pore.concentration"] = c
+        phase["pore.potential"] = phi
+        # regenerate ALL models
+        # print(jnp.sum(phase["throat.concentration"]))
+        # print(jnp.sum(phase["throat.ionic_conductance"]))
+        # print(jnp.sum(phase["pore.mass_source"]["rate"]))
+        # print(jnp.sum(jnp.abs(phase["pore.charge_source"]["rate"])))
+        co.regenerate_models(proj, phase)
+        # print(jnp.sum(phase["throat.concentration"]))
+        # print(jnp.sum(phase["throat.ionic_conductance"]))
+        # print(jnp.sum(phase["pore.mass_source"]["rate"]))
+        # print(jnp.sum(jnp.abs(phase["pore.charge_source"]["rate"])))
+        # update A and b
+        pnm.algorithms.update_A_and_b(proj, "alg2")
+        pnm.algorithms.update_A_and_b(proj, "alg3")
+        # break if g_tol reached
+        print(f"  Residual: {g_res}")
+        if jnp.all(g_res < g_tol):
+            print(f"  Convergence criteria met: {g_res}")
+            break
+        # break if max no. of iterations reached
+        if g_iter == g_max_iter - 1:
+            break
+        # calculate new residual
+        g_res = jnp.array([jnp.sum((c - c_old)**2),
+                           jnp.sum((phi - phi_old)**2)])
+        # print(c)
+        # print(phi)
+        # update old c and phi
+        c_old = c.copy()
+        phi_old = phi.copy()
+    # store old c_mi and phi_d
+    phase["pore.micro_concentration_old"] = phase["pore.micro_concentration"].copy()
+    phase["pore.donnan_potential_old"] = phase["pore.donnan_potential"].copy()
+    # regenerate models
+    co.regenerate_models(proj, phase)
+    # update transport algorithms
+    pnm.algorithms.update_A_and_b(proj, "alg2")
+    pnm.algorithms.update_A_and_b(proj, "alg3")
+'''
+
 # time stepping
 # choose t0, dt, and tf
 t0 = 0
@@ -331,46 +441,50 @@ for t in jnp.arange(t0 + dt, tf+dt, dt):
     # choose c_old and phi_old as initial condition
     c_old = c0.copy()
     phi_old = phi0.copy()
+    # initialize phi_guess as phi0
+    # phi_guess = phi0
     # define gummel convergence
     g_res = jnp.array([100, 100])
-    g_tol = jnp.array([1e-4, 1e-4])
+    g_tol = jnp.array([1e-4, 1e-8])
     g_max_iter = 20
     for g_iter in range(g_max_iter):
         print(f"  Gummel Iteration No. {g_iter + 1}")
         # solve mass balance
-        start = time.time()
+        # start = time.time()
         ts, ys = implicit_solve(rhs_mass,
                                 t_span=(0, dt),
                                 y0=c0,
-                                dt=0.1,
+                                dt=dt,
                                 method="crank-nicolson",
                                 args=(mt["A"], mt["b"], V),
-                                tol=1e-6,  # change to 1e-4 when scaled up
+                                tol=1e-4,  # change to 1e-4 when scaled up
+                                iters=25,
+                                alpha=0.5,
                                 check_convergence=False)
-        ys.block_until_ready()
-        stop = time.time()
-        print(f"Mass time: {stop - start}s")
+        # ys.block_until_ready()
+        # stop = time.time()
+        # print(f"Mass time: {stop - start}s")
         c = ys[-1, :]
         # solve charge balance
-        start = time.time()
+        # start = time.time()
         ts, ys = dae_solve(phi0,
+                           u_guess=phi0,
                            t_span=(0, dt),
-                           dt=0.01,
+                           dt=dt,
                            args=(ct["A"], ct["b"], CaV),
                            is_transient=net["pore.micropore"],
                            tol=1e-6,
                            atol=1e-8,
                            maxiter=100)
-        ys.block_until_ready()
-        stop = time.time()
-        print(f"Charge time: {stop - start}s")
+        # ys.block_until_ready()
+        # stop = time.time()
+        # print(f"Charge time: {stop - start}s")
         phi = ys[-1, :]
         # update concentration and potential
         phase["pore.concentration"] = c
         phase["pore.potential"] = phi
         # regenerate physics based on c and phi
-        co.regenerate_models(proj, phase)  # FIXME: Not sure dependency handler working!
-        # print(phase["pore.donnan_potential"][net["pore.micropore"]])
+        co.regenerate_models(proj, phase)
         # update transport algs
         pnm.algorithms.update_A_and_b(proj, "alg2")
         pnm.algorithms.update_A_and_b(proj, "alg3")
@@ -385,6 +499,8 @@ for t in jnp.arange(t0 + dt, tf+dt, dt):
         # calculate new residual
         g_res = jnp.array([jnp.sum((c - c_old)**2),
                            jnp.sum((phi - phi_old)**2)])
+        # calcualte phi guess
+        # phi_guess = (phi + phi_old)/2
         # updated old c and phi
         c_old = c.copy()
         phi_old = phi.copy()
@@ -398,6 +514,9 @@ for t in jnp.arange(t0 + dt, tf+dt, dt):
     phase["pore.donnan_potential_old"] = phase["pore.donnan_potential"].copy()
     # regenerate models
     co.regenerate_models(proj, phase)
+    # update transport algorithms
+    # pnm.algorithms.update_A_and_b(proj, "alg2")
+    # pnm.algorithms.update_A_and_b(proj, "alg3")
     # store results if t is in tsave
     if jnp.any(jnp.isclose(t, t_save, atol=1e-10)):
         # get phi_d and c_mi
