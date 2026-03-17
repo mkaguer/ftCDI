@@ -1,5 +1,5 @@
 import numpy as np
-import models.misc as mods
+import models.numpy.misc as mods
 import openpnm as op
 from scipy.integrate import solve_ivp
 from scipy_dae.integrate import solve_dae
