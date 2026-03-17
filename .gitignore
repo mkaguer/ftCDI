@@ -90,3 +90,4 @@ scripts/pnmlib/models/geometry/diffusive_size_factors/__pycache__
 scripts/pnmlib/models/__pycache__
 scripts/pnmlib/algorithms/__pycache__
 scripts/pnmlib/models/geometry/__pycache__
+scripts/models/jax/electrical_double_layer/__pycache__
