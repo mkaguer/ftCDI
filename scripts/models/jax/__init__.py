@@ -6,3 +6,4 @@ from . import throat_length
 from . import throat_volume
 from . import effective_volume
 from . import misc
+from . import electrical_double_layer
