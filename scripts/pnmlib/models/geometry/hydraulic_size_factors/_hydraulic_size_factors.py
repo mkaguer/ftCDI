@@ -1,5 +1,5 @@
-from mypnmlib.models.conduit_lengths import _conduit_lengths
-from mypnmlib.models.misc._misc import _get_conduit_data
+from pnmlib.models.geometry.conduit_lengths import _conduit_lengths
+from pnmlib.models.misc._misc import _get_conduit_data
 import jax.numpy as jnp
 
 __all__ = ["spheres_and_cylinders",

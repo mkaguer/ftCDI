@@ -1,4 +1,4 @@
-from mypnmlib.models.misc._misc import _poisson_conductance
+from pnmlib.models.misc._misc import _poisson_conductance
 import jax.numpy as jnp
 
 __all__ = ["generic_diffusive"]

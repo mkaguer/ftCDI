@@ -1,4 +1,4 @@
-# from . import conduit_lengths
+from . import conduit_lengths
 # from . import misc
 from . import throat_length
 from . import hydraulic_size_factors

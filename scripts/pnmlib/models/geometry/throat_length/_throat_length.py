@@ -1,4 +1,4 @@
-from mypnmlib.models.conduit_lengths import _conduit_lengths
+from pnmlib.models.geometry.conduit_lengths import _conduit_lengths
 
 __all__ = ["spheres_and_cylinders",
            "cubes_and_cuboids"]

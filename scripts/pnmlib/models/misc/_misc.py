@@ -8,7 +8,10 @@ __all__ = ["difference",
            "from_neighbor_pores",
            "conductivity",
            "find_neighbor_throats",
-           "from_neighbor_throats"]
+           "from_neighbor_throats",
+           "_get_conduit_data",
+           "_get_L_ctc",
+           "_poisson_conductance"]
 
 
 def difference(network, props):
@@ -362,3 +365,91 @@ def _create_incidence_matrix(network, weights=None, fmt='coo',
         temp = temp.todok()
 
     return temp
+
+
+def _get_conduit_data(network, propname):
+    r"""
+    Fetches an Nt-by-3 array of the requested property
+
+    Parameters
+    ----------
+    propname : str
+        The dictionary key of the property to fetch.
+
+    Returns
+    -------
+    data : ndarray
+        An Nt-by-3 array with each column containing the requrested data
+        for pore1, throat, and pore2 respectively.
+
+    """
+    poreprop = 'pore.' + propname.split('.', 1)[-1]
+    throatprop = 'throat.' + propname.split('.', 1)[-1]
+    conns = network['throat.conns']
+    T = network[throatprop]
+    P1, P2 = network[poreprop][conns.T]
+
+    vals = jnp.vstack((P1, T, P2)).T
+
+    return vals
+
+
+def _get_L_ctc(network):
+    """Returns throat spacing if it exists, otherwise calculates it."""
+    try:
+        L_ctc = network["throat.spacing"]
+    except KeyError:
+        P12 = network["throat.conns"]
+        C1 = network["pore.coords"][P12[:, 0]]
+        C2 = network["pore.coords"][P12[:, 1]]
+        L_ctc = jnp.linalg.norm(C1 - C2, axis=1)
+
+
+def _poisson_conductance(network,
+                         pore_conductivity=None,
+                         throat_conductivity=None,
+                         size_factors=None):
+    r"""
+    Calculates the conductance of the conduits in the network, where a
+    conduit is (1/2 pore - full throat - 1/2 pore). See the notes section.
+
+    Parameters
+    ----------
+    phase : OpenPNM Phase
+        The object which this model is associated with. This controls the
+        length of the calculated array, and also provides access to other
+        necessary properties.
+    pore_conductivity : str
+        Dictionary key of the pore conductivity values
+    throat_conductivity : str
+        Dictionary key of the throat conductivity values
+    size_factors: str
+        Dictionary key of the conduit size factors' values.
+
+    Returns
+    -------
+    g : ndarray
+        Array containing conductance values for conduits in the
+        geometry attached to the given physics object.
+
+    Notes
+    -----
+    This function requires that all the necessary phase properties
+    already be calculated.
+
+    """
+    cn = network["throat.conns"]
+    Dt = network[throat_conductivity]
+    D1, D2 = network[pore_conductivity][cn].T
+    # If individual size factors for conduit constiuents are known
+    SF = network[size_factors]
+    if SF.ndim == 2:
+        F1, Ft, F2 = SF.T
+        g1 = D1 * F1
+        gt = Dt * Ft
+        g2 = D2 * F2
+        return 1 / (1 / g1 + 1 / gt + 1 / g2)
+    else:
+        # Otherwise, i.e., the size factor for the entire conduit is only known
+        F = network[size_factors]
+        return Dt * F
