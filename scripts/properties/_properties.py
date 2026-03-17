@@ -10,5 +10,6 @@ properties = {
     "cf": 5.37,  # mol/m3
     "V_cell": 1.0,
     "mu_att": 1.0,
-    "Ca": 35 * 100 ** 3  # (145 F/mL, Guyes 2017)
+    "Ca": 35 * 100 ** 3,  # (145 F/mL, Guyes 2017)
+    "T": 298  # K
 }
