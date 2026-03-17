@@ -24,6 +24,10 @@ def apply_models(network, models, domain=None):
                 network[propname] = values
                 continue
             # FIXME: line below causes a tracer
-            prop = network.get(propname, jnp.full_like(values, -1))
+            # prop = network.get(propname, jnp.full_like(values, -1))
+            if propname in network:
+                prop = network[propname]
+            else:
+                prop = jnp.full_like(values, -1)
             values = jnp.where(mask, values, prop)
             network[propname] = values
