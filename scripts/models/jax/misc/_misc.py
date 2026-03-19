@@ -170,7 +170,7 @@ def mass_source_effective(phase,
     return values
 
 
-def outflow(network):
+def outflow(network, pores, throats):
     r"""
 
     Calculates outflow for all pores
@@ -178,15 +178,15 @@ def outflow(network):
     """
     # get Np
     Np = len(network["pore.coords"])
-    C12 = network["throat.conns"]
+    pores = jnp.arange(Np)[pores]
+    C12 = network["throat.conns"][throats]
     P12 = network["pore.pressure"][C12]
-    gh = network["throat.hydraulic_conductance"]
+    gh = network["throat.hydraulic_conductance"][throats]
     Q12 = -gh * jnp.diff(P12, axis=1).squeeze()
     # get net flow rate for each pore
     Qp = jnp.zeros(Np)
     Qp = jnp.add.at(Qp, C12[:, 0], -Q12, inplace=False)
     Qp = jnp.add.at(Qp, C12[:, 1], Q12, inplace=False)
     
-    return Qp
-    
+    return jnp.where(pores, Qp, 0.0)
     
