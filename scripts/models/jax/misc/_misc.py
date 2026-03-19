@@ -7,7 +7,8 @@ __all__ = ["effective_diffusivity",
            "micropore_concentration",
            "mass_source",
            "charge_source",
-           "mass_source_effective"]
+           "mass_source_effective",
+           "outflow"]
 
 
 def effective_diffusivity(phase, D, epsilon, tau):
@@ -167,3 +168,25 @@ def mass_source_effective(phase,
     values = {"S1": S1, "S2": S2, "rate": rate}
     
     return values
+
+
+def outflow(network):
+    r"""
+
+    Calculates outflow for all pores
+
+    """
+    # get Np
+    Np = len(network["pore.coords"])
+    C12 = network["throat.conns"]
+    P12 = network["pore.pressure"][C12]
+    gh = network["throat.hydraulic_conductance"]
+    Q12 = -gh * jnp.diff(P12, axis=1).squeeze()
+    # get net flow rate for each pore
+    Qp = jnp.zeros(Np)
+    Qp = jnp.add.at(Qp, C12[:, 0], -Q12, inplace=False)
+    Qp = jnp.add.at(Qp, C12[:, 1], Q12, inplace=False)
+    
+    return Qp
+    
+    
