@@ -129,7 +129,7 @@ def charge_source(phase,
     a = phase[pore_surface_area]
     V = phase[pore_volume]
     
-    S1 = jnp.zeros(len(V_mi))
+    S1 = jnp.zeros(len(V))
     S2 = - C * a * V * (phi_d_f - phi_d_i) / dt
     rate = S2
     values = {"S1": S1, "S2": S2, "rate": rate}
