@@ -94,7 +94,7 @@ def micropore_concentration(c, phi_d, T, mu_att):
 
 def mass_source(c_mi_f, c_mi_i, V_mi, dt):
     
-    S1 = 0
+    S1 = jnp.zeros(len(V_mi))
     S2 = - 1/2 * V_mi * (c_mi_f - c_mi_i) / dt
     rate = S2
     values = {"S1": S1, "S2": S2, "rate": rate}
@@ -104,7 +104,7 @@ def mass_source(c_mi_f, c_mi_i, V_mi, dt):
 
 def charge_source(phi_d_f, phi_d_i, C, a, V, dt):
     
-    S1 = 0
+    S1 = jnp.zeros(len(V))
     S2 = - C * a * V * (phi_d_f - phi_d_i) / dt
     rate = S2
     values = {"S1": S1, "S2": S2, "rate": rate}
