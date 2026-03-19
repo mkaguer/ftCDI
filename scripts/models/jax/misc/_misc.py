@@ -106,7 +106,7 @@ def mass_source(phase,
     c_mi_i = phase[pore_micro_concentration_old]
     c_mi_f = phase[pore_micro_concentration]
     
-    S1 = 0
+    S1 = jnp.zeros(len(V_mi))
     S2 = - 1/2 * V_mi * (c_mi_f - c_mi_i) / dt
     rate = S2
     values = {"S1": S1, "S2": S2, "rate": rate}
@@ -129,7 +129,7 @@ def charge_source(phase,
     a = phase[pore_surface_area]
     V = phase[pore_volume]
     
-    S1 = 0
+    S1 = jnp.zeros(len(V_mi))
     S2 = - C * a * V * (phi_d_f - phi_d_i) / dt
     rate = S2
     values = {"S1": S1, "S2": S2, "rate": rate}
