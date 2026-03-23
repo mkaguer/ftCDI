@@ -91,3 +91,4 @@ scripts/pnmlib/models/__pycache__
 scripts/pnmlib/algorithms/__pycache__
 scripts/pnmlib/models/geometry/__pycache__
 scripts/models/jax/electrical_double_layer/__pycache__
+scripts/pnmlib/models/geometry/conduit_lengths/__pycache__
