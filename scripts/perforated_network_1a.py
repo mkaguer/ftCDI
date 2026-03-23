@@ -10,8 +10,8 @@ import numpy as np
 import network
 
 # set dimensions
-length = 5e-5
-d = 5e-5
+length = 3e-4
+d = 2e-4
 
 # load network
 data = np.load('../networks/scale_network_1a.npz')
@@ -34,7 +34,6 @@ Lx = np.round((np.max(coords[:, 0]) - np.min(coords[:, 0]))/spacing, 10) + 1
 Ly = np.round((np.max(coords[:, 1]) - np.min(coords[:, 1]))/spacing, 10) + 1
 Lz = np.round((np.max(coords[:, 2]) - np.min(coords[:, 2]))/spacing, 10) + 1
 shape = [int(Lx), int(Ly), int(Lz)]
-shape = [10, 10, 10]
 
 # make my bcc
 net = network.my_bcc(shape, spacing)
@@ -52,9 +51,22 @@ net["throat.diameter@micropore"] = 1.0 * np.max(D[throat_conns], axis=1)
 # slice network
 net = network.slice_network(net, length=length, axis=0)
 
+'''
+# export to paraview
+net["throat.radius"] = net["throat.diameter"]/2
+op.io.project_to_xdmf(project=net.project,
+                      filename="../paraview/perforated_network_sliced_1a_test")
+'''
+
 # cut hole
 net = network.cut_hole(net, d=d, axis=0)
 
+'''
+# export to paraview
+net["throat.radius"] = net["throat.diameter"]/2
+op.io.project_to_xdmf(project=net.project,
+                      filename="../paraview/perforated_network_hole_1a_test")
+'''
 # add perforated pores
 network = network.add_perforated_pores(net, axis=0)
 network["pore.diameter@perforated"] = d
