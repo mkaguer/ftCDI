@@ -1,5 +1,5 @@
 """
-Create a Large unperforated network from fitted one!
+Create a large unperforated network from fitted one!
 
 Created by: Mike McKague
 Date: December 6, 2025
@@ -11,6 +11,8 @@ from scipy.stats import gaussian_kde
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 from sklearn.gaussian_process import GaussianProcessRegressor
 from scipy.spatial import cKDTree
+import copy
+import models.numpy as models
 
 op.visualization.set_mpl_style()
 
@@ -131,7 +133,7 @@ pc_exp = -4 * sigma * np.cos(theta*np.pi/180) / (x/1e6)  # assume cylinderical t
 
 #%% Create a Scaled network 15 by 15 by 15
 spacing = 1e-5
-shape_s = [30, 30, 30]
+shape_s = [10, 10, 10]
 net_s = op.network.Cubic(shape=shape_s, spacing=spacing)
 
 # get pore coords
@@ -305,6 +307,199 @@ sat_sam = data.snwp
 pc_sam = data.pc
 
 
+#%% Stitch network
+
+
+def stitch_network(network, shape, spacing, ns):
+    
+    # get ns
+    nx, ny, nz = ns
+    # create stitched network
+    stitched = op.io.network_from_porespy(copy.deepcopy(network))
+    
+    
+    def assign_labels(network):
+        
+        # get min and max z, y, z
+        xmax = np.max(network["pore.coords"][:, 0])
+        xmin = np.min(network["pore.coords"][:, 0])
+        ymax = np.max(network["pore.coords"][:, 1])
+        ymin = np.min(network["pore.coords"][:, 1])
+        zmax = np.max(network["pore.coords"][:, 2])
+        zmin = np.min(network["pore.coords"][:, 2])
+        # assign x, y, z masks
+        network["pore.xmax"] = network["pore.coords"][:, 0] == xmax
+        network["pore.xmin"] = network["pore.coords"][:, 0] == xmin
+        network["pore.ymax"] = network["pore.coords"][:, 1] == ymax
+        network["pore.ymin"] = network["pore.coords"][:, 1] == ymin
+        network["pore.zmax"] = network["pore.coords"][:, 2] == zmax
+        network["pore.zmin"] = network["pore.coords"][:, 2] == zmin
+        # assign surface labels
+        labels = ["xmin", "xmax", "ymin", "ymax", "zmin", "zmax"]
+        label = np.zeros(network.Np, dtype=bool)
+        label[network.pores(labels=labels, mode="or")] = True
+        network["pore.surface"] = label
+        
+        return network
+
+
+    # stitch network in x-direction
+    for x in range(nx-1):
+        # make donor by copying network
+        donor = op.io.network_from_porespy(copy.deepcopy(network))
+        # shift donor network
+        donor["pore.coords"][:, 0] += (x+1)*spacing*shape[0]
+        # stitch donor network
+        op.topotools.stitch(stitched, donor, stitched.pores("xmax"),
+                            donor.pores("xmin"))
+        # clear all labels
+        for label in list(stitched.labels()):
+            stitched.pop(label)
+        # assign x-max label for subsequent stitching
+        xmax = np.max(stitched["pore.coords"][:, 0])
+        stitched["pore.xmax"] = stitched["pore.coords"][:, 0] == xmax
+        
+    # re-assign labels
+    stitched = assign_labels(stitched)
+    network = op.io.network_from_porespy(copy.deepcopy(stitched))
+    
+    # stitch network in y-direction
+    for y in range(ny-1):
+        # make donor by copying network
+        donor = op.io.network_from_porespy(copy.deepcopy(network))
+        # shift donor network
+        donor["pore.coords"][:, 1] += (y+1)*spacing*shape[1]
+        # stitch donor network
+        op.topotools.stitch(stitched, donor, stitched.pores("ymax"),
+                            donor.pores("ymin"))
+        # clear all labels
+        for label in list(stitched.labels()):
+            stitched.pop(label)
+        # assign y-max label for subsequent stitching
+        ymax = np.max(stitched["pore.coords"][:, 1])
+        stitched["pore.ymax"] = stitched["pore.coords"][:, 1] == ymax
+    
+    # re-assign labels
+    stitched = assign_labels(stitched)
+    network = op.io.network_from_porespy(copy.deepcopy(stitched))
+    
+    # stitch network in z-direction
+    for z in range(nz-1):
+        # make donor by copying network
+        donor = op.io.network_from_porespy(copy.deepcopy(network))
+        # shift donor network
+        donor["pore.coords"][:, 2] += (z+1)*spacing*shape[2]
+        # stitch donor network
+        op.topotools.stitch(stitched, donor, stitched.pores("zmax"),
+                            donor.pores("zmin"))
+        # clear all labels
+        for label in list(stitched.labels()):
+            stitched.pop(label)
+        # assign z-max label for subsequent stitching
+        zmax = np.max(stitched["pore.coords"][:, 2])
+        stitched["pore.zmax"] = stitched["pore.coords"][:, 2] == zmax
+    
+    # re-assign labels
+    stitched = assign_labels(stitched)
+    network = op.io.network_from_porespy(copy.deepcopy(stitched))
+    
+    return network
+
+ns = [7, 7, 3]
+net_stitch = stitch_network(net_s, shape_s, spacing, ns)
+
+# FIXME: use tsf_kde = 1 (more accurate results)
+# give sizes to stitched throats
+# fit gaussian kde to throat sizes
+kde = gaussian_kde(tsf, bw_method=0.01)
+# sample from kde
+mask = np.isnan(net_stitch["throat.diameter"])
+tsf_kde = kde.resample(sum(mask))[0]
+# assign throat diameters
+conns = net_stitch["throat.conns"][mask]
+D_s = net_stitch["pore.diameter"]
+net_stitch["throat.diameter"][mask] = 1.0 * np.min(np.abs(D_s[conns]), axis=1)
+
+
+#%% Run Simulation on Stitched Network
+
+'''
+# change model so they allow for Dt > Dp
+hsf_model = models.hydraulic_size_factors.spheres_and_cylinders
+dsf_model = models.diffusive_size_factors.spheres_and_cylinders
+tl_model = models.throat_length.spheres_and_cylinders
+geo_mods["throat.hydraulic_size_factors"]["model"] = hsf_model
+geo_mods["throat.diffusive_size_factors"]["model"] = dsf_model
+geo_mods["throat.length"]["model"] = tl_model
+'''
+
+# add geometry models
+net_stitch.add_model_collection(models=geo_mods)
+net_stitch.regenerate_models()
+
+# create phase object
+phase_stitch = op.phase.Phase(network=net_stitch)
+phase_stitch["throat.contact_angle"] = theta
+phase_stitch["throat.surface_tension"] = sigma
+phase_stitch["throat.viscosity"] = 1e-3 
+
+# add physics models
+phase_stitch.add_model_collection(models=phys_mods)
+phase_stitch.regenerate_models()
+
+# stokes flow simulation to estimate permeability
+Pin, Pout = 1, 0
+shape_stitch = [shape_s[0]*ns[0], shape_s[1]*ns[1], shape_s[2]*ns[2]]  # FIXME: temporary
+Ax = shape_stitch[1] * shape_stitch[2] * spacing ** 2
+Ay = shape_stitch[0] * shape_stitch[2] * spacing ** 2
+Az = shape_stitch[0] * shape_stitch[1] * spacing ** 2
+Lx, Ly, Lz = np.array(shape_stitch) * spacing - spacing
+mu = phase['pore.viscosity'].max()
+
+# measure K in x-direction
+flow_x = op.algorithms.StokesFlow(network=net_stitch, phase=phase_stitch)
+flow_x.set_value_BC(pores=net_stitch.pores("xmin"), values=Pin)
+flow_x.set_value_BC(pores=net_stitch.pores("xmax"), values=Pout)
+flow_x.run()
+
+Q_x = flow_x.rate(pores=net_stitch.pores("xmin"), mode='group')[0]
+Kst_x = Q_x * Lx * mu / (Ax * (Pin - Pout))
+print(f'K_stitch_x is: {Kst_x} m2')
+
+# measure K in y-direction
+flow_y = op.algorithms.StokesFlow(network=net_stitch, phase=phase_stitch)
+flow_y.set_value_BC(pores=net_stitch.pores("ymin"), values=Pin)
+flow_y.set_value_BC(pores=net_stitch.pores("ymax"), values=Pout)
+flow_y.run()
+
+Q_y = flow_y.rate(pores=net_stitch.pores("ymin"), mode='group')[0]
+Kst_y = Q_y * Ly * mu / (Ay * (Pin - Pout))
+print(f'K_stitch_y is: {Kst_y} m2')
+
+# measure K in z-direction
+flow_z = op.algorithms.StokesFlow(network=net_stitch, phase=phase_stitch)
+flow_z.set_value_BC(pores=net_stitch.pores("zmin"), values=Pin)
+flow_z.set_value_BC(pores=net_stitch.pores("zmax"), values=Pout)
+flow_z.run()
+
+Q_z = flow_z.rate(pores=net_stitch.pores("zmin"), mode='group')[0]
+Kst_z = Q_z * Lz * mu / (Az * (Pin - Pout))
+print(f'K_stitch_z is: {Kst_z} m2')
+
+Kst_avg = np.average([Kst_x, Kst_y, Kst_z])
+print(f'K_stitch is: {Kst_avg} m2')
+
+# run drainage
+alg_stitch = op.algorithms.Drainage(phase=phase_stitch, network=net_stitch)
+alg_stitch.set_inlet_BC(pores=net_stitch.pores("surface"))
+alg_stitch.run()
+
+# get pc curve data
+data = alg_stitch.pc_curve()
+sat_stitch = data.snwp
+pc_stitch = data.pc
+
+
 #%% plot target saturation
 plt.figure(3, dpi=500)
 ax = plt.gca()  # Get current axes
@@ -312,6 +507,7 @@ ax = plt.gca()  # Get current axes
 # re-scale calibrated and sampled data
 sat_tra = sat_tra * sat_exp[26]
 sat_sam = sat_sam * sat_exp[26]
+sat_stitch = sat_stitch * sat_exp[26]
 
 # FIXME: should I add these points?
 # pc_tra = np.concatenate((np.array([1.5e5]), pc_tra, np.array([5e6])))
@@ -337,7 +533,7 @@ plt.semilogx(pc_tra, sat_tra, label='Trained PNM',
              markeredgecolor='g', markeredgewidth=2)
 
 # Plot sampled data (black line with hollow markers)
-plt.semilogx(pc_sam, sat_sam, label='Sampled PNM',
+plt.semilogx(pc_stitch, sat_stitch, label='Stitched PNM',
              color='orange', linestyle='solid', linewidth=3,
              marker='o', markersize=8,
              markerfacecolor='none',          # transparent center
@@ -366,6 +562,7 @@ ax.tick_params(direction='in', length=6, width=3)
 
 K_fitted = np.array([K_x, K_y, K_z, K_avg])
 K_sample = np.array([Ks_x, Ks_y, Ks_z, Ks_avg])
+K_stitch = np.array([Kst_x, Kst_y, Kst_z, Kst_avg])
 K_target = np.array([2e-16, 2e-16, 2e-16, 2e-16])
 
 x = np.arange(len(K_fitted))
@@ -373,7 +570,7 @@ bar_width = 0.25
 
 plt.bar(x, K_target, width=bar_width, label='Target', color='k')
 plt.bar(x + bar_width, K_fitted, width=bar_width, label='Trained', color='g')
-plt.bar(x + 2 * bar_width, K_sample, width=bar_width, label='Sample', color='orange')
+plt.bar(x + 2 * bar_width, K_stitch, width=bar_width, label='Stitch', color='orange')
 plt.ylabel('Permeability (m$^2$)', fontsize=18, fontweight='normal')
 plt.xticks(x + bar_width, ['X', 'Y', 'Z', 'Avg'], fontsize=18, fontweight='normal')
 plt.yticks(fontsize=18, fontweight='normal')
@@ -386,10 +583,10 @@ plt.show()
 #%% Export
 
 # export to paraview
-net_s["pore.invasion_sequence"] = alg_s["pore.invasion_sequence"]
-net_s["throat.invasion_sequence"] = alg_s["throat.invasion_sequence"]
-net_s["throat.radius"] = net_s["throat.diameter"]/2
-op.io.project_to_xdmf(project=net_s.project,
+net_stitch["pore.invasion_sequence"] = alg_stitch["pore.invasion_sequence"]
+net_stitch["throat.invasion_sequence"] = alg_stitch["throat.invasion_sequence"]
+net_stitch["throat.radius"] = net_stitch["throat.diameter"]/2
+op.io.project_to_xdmf(project=net_stitch.project,
                       filename="../paraview/scale_network_1a")
 
 # export to .npz file
