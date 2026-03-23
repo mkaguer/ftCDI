@@ -2,12 +2,24 @@ import numpy as np
 import openpnm as op
 import network
 
+
+
+
+test = False
+
 # set dimensions
-l_sep = 2.714e-5  # should be 190um (Guyes)
-d = 3e-5
+if test:
+    l_sep = 2.714e-5
+    d = 3e-5
+else:
+    l_sep = 1.9e-4  # should be 190um (Guyes)
+    d = 2e-4
 
 # load network
-data = np.load('../networks/perforated_network_1a_test.npz')
+if test:
+    data = np.load('../networks/perforated_network_1a_test.npz')
+else:
+    data = np.load('../networks/perforated_network_1a.npz')
 data = {key: np.array(data[key]) for key in data.files}
 
 # convert to openpnm object
@@ -47,8 +59,16 @@ throats = net.throats("perforated")
 net["throat.macropore"][throats] = False
 
 # export to paraview
-op.io.project_to_xdmf(project=net.project,
-                      filename="../paraview/create_full_cell_1a")
+if test:
+    op.io.project_to_xdmf(project=net.project,
+                          filename="../paraview/create_full_cell_1a_test")
+else:
+    op.io.project_to_xdmf(project=net.project,
+                          filename="../paraview/create_full_cell_1a")
 
-# export to .npz file
-np.savez_compressed("../networks/create_full_cell_1a.npz", **net)
+if test:
+    # export to .npz file
+    np.savez_compressed("../networks/create_full_cell_1a_test.npz", **net)
+else:
+    # export to .npz file
+    np.savez_compressed("../networks/create_full_cell_1a.npz", **net)
