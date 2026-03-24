@@ -9,12 +9,21 @@ import openpnm as op
 import numpy as np
 import network
 
+test = True
+
 # set dimensions
-length = 3e-4
-d = 2e-4
+if test:
+    length = 4e-5
+    d = 3e-5
+else:
+    length = 3e-4
+    d = 2e-4
 
 # load network
-data = np.load('../networks/scale_network_1a.npz')
+if test:
+    data = np.load('../networks/scale_network_1a_test.npz')
+else:
+    data = np.load('../networks/scale_network_1a.npz')
 data = {key: np.array(data[key]) for key in data.files}
 
 # retrieve diameters
@@ -42,31 +51,22 @@ net = network.my_bcc(shape, spacing)
 net["pore.diameter@macropore"] = Dp
 net["pore.diameter@micropore"] = 1e-16  # can't be 1e-32!
 
+# get throat indices for reordering!
+idx = np.where((net["throat.conns@macropore"][:, None] == conns).all(-1))[1]
+
 # assign throat diameters
-net["throat.diameter@macropore"] = Dt
+net["throat.diameter@macropore"] = Dt[idx]
 D = net["pore.diameter"]
 throat_conns = net["throat.conns@micropore"]
-net["throat.diameter@micropore"] = 1.0 * np.max(D[throat_conns], axis=1)
+net["throat.diameter@micropore"] = np.sqrt((1/2*spacing)**2 + (1/2*spacing)**2)
+# net["throat.diameter@micropore"] = 1.0 * np.max(D[throat_conns], axis=1)
 
 # slice network
 net = network.slice_network(net, length=length, axis=0)
 
-'''
-# export to paraview
-net["throat.radius"] = net["throat.diameter"]/2
-op.io.project_to_xdmf(project=net.project,
-                      filename="../paraview/perforated_network_sliced_1a_test")
-'''
-
 # cut hole
 net = network.cut_hole(net, d=d, axis=0)
 
-'''
-# export to paraview
-net["throat.radius"] = net["throat.diameter"]/2
-op.io.project_to_xdmf(project=net.project,
-                      filename="../paraview/perforated_network_hole_1a_test")
-'''
 # add perforated pores
 network = network.add_perforated_pores(net, axis=0)
 network["pore.diameter@perforated"] = d
@@ -75,8 +75,16 @@ throat_conns = net["throat.conns@perforated"]
 network["throat.diameter@perforated"] = 1.0 * np.min(D[throat_conns], axis=1)
 
 # export to paraview
-op.io.project_to_xdmf(project=net.project,
-                      filename="../paraview/perforated_network_1a")
+network["throat.radius"] = network["throat.diameter"]/2
+if test:
+    op.io.project_to_xdmf(project=net.project,
+                          filename="../paraview/perforated_network_1a_test")
+else:
+    op.io.project_to_xdmf(project=net.project,
+                          filename="../paraview/perforated_network_1a")
 
 # export to .npz file
-np.savez_compressed("../networks/perforated_network_1a.npz", **net)
+if test:
+    np.savez_compressed("../networks/perforated_network_1a_test.npz", **net)
+else:
+    np.savez_compressed("../networks/perforated_network_1a.npz", **net)
