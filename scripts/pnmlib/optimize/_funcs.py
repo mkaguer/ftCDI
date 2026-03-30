@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 from jax import lax
-from jax.scipy.sparse.linalg import cg, gmres
+from jax.scipy.sparse.linalg import cg, gmres, bicgstab
 
 __all__ = ["newton_krylov",
            "newton_krylov_scan"]
@@ -78,7 +78,7 @@ def newton_krylov_scan(fun, x0, max_iters=20, tol=1e-6, newton_maxiter=50, newto
             def matvec(v):
                 return Jv(x, v)
 
-            delta, _ = cg(
+            delta, _ = bicgstab(
                 matvec,
                 -F,
                 tol=newton_tol,
