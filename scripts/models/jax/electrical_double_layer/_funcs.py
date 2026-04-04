@@ -130,7 +130,26 @@ def mass_source_effective(R, c, V, dt):
     # Limit sink magnitude
     R_eff = jnp.where(sink, jnp.maximum(R, -R_max), R_eff)
     
-    S1 = 0
+    S1 = jnp.zeros(len(R))
+    S2 = R_eff
+    rate = S2
+    values = {"S1": S1, "S2": S2, "rate": rate}
+    
+    return values
+
+
+def mass_source_effective_v2(R):
+    
+    # get rate
+    R = R["rate"]
+    
+    # Identify sinks (negative rates)
+    source = R > 0
+    
+    # Limit sink magnitude
+    R_eff = jnp.where(source, 0.0, R)
+    
+    S1 = jnp.zeros(len(R))
     S2 = R_eff
     rate = S2
     values = {"S1": S1, "S2": S2, "rate": rate}
