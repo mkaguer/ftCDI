@@ -8,6 +8,7 @@ __all__ = ["conductivity",
            "mass_source",
            "charge_source",
            "mass_source_effective",
+           "mass_source_effective_v2",
            "micro_concentration_eff"]
 
 
@@ -75,8 +76,8 @@ def donnan_potential(phi_d0,
         return f
     
     # use newton_krylov to get donnan potential
-    phi_d = pnm.optimize.newton_krylov_scan(potential_balance,
-                                            phi_d0, tol=6e-6)
+    phi_d = pnm.optimize.newton_krylov_scan_v2(potential_balance,
+                                            phi_d0, tol=1e-8)
     
     return phi_d
 

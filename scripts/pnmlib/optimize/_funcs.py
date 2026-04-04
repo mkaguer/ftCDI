@@ -4,7 +4,8 @@ from jax import lax
 from jax.scipy.sparse.linalg import cg, gmres, bicgstab
 
 __all__ = ["newton_krylov",
-           "newton_krylov_scan"]
+           "newton_krylov_scan",
+           "newton_krylov_scan_v2"]
 
 
 def newton_krylov(fun,
@@ -92,6 +93,80 @@ def newton_krylov_scan(fun, x0, max_iters=20, tol=1e-6, newton_maxiter=50, newto
             return x_new, converged_new
 
         x_new, converged_new = jax.lax.cond(converged, lambda x: (x, True), compute, x)
+        return (x_new, converged_new), None
+
+    # initial state: x0 and not converged
+    init_state = (x0, False)
+
+    # scan over max_iters steps
+    final_state, _ = lax.scan(body_fun, init_state, xs=None, length=max_iters)
+
+    x_final, _ = final_state
+    return x_final
+
+
+def newton_krylov_scan_v2(fun,
+                          x0,
+                          max_iters=100,
+                          tol=1e-6,
+                          newton_maxiter=400,
+                          newton_tol=1e-8,
+                          alpha=1.0,
+                          precond=None,
+                          precond_eps=1e-12):
+    """
+    Fully jittable Newton–Krylov solver using lax.scan.
+
+    If `precond` is provided, it should be a callable of the form
+    `precond(x)` that returns a linear preconditioner `M(v)`.
+    Otherwise a simple diagonal Jacobian preconditioner is built.
+    """
+
+    def Jv(x, v):
+        return jax.jvp(fun, (x,), (v,))[1]
+
+    def diagonal_preconditioner(x):
+        J = jax.jacfwd(fun)(x)
+        diag = jnp.diag(J)
+        inv_diag = jnp.where(jnp.abs(diag) > precond_eps,
+                             1.0 / diag,
+                             1.0)
+
+        def M(v):
+            return inv_diag * v
+
+        return M
+
+    def body_fun(state, _):
+        x, converged = state
+
+        # skip computation if already converged
+        def compute(x):
+            F = fun(x)
+
+            def matvec(v):
+                return Jv(x, v)
+
+            M = precond(x) if precond is not None else diagonal_preconditioner(x)
+
+            delta, _ = gmres(
+                matvec,
+                -F,
+                tol=newton_tol,
+                maxiter=newton_maxiter,
+                M=M
+            )
+
+            x_new = x + alpha * delta
+            normF = jnp.linalg.norm(fun(x_new))
+            converged_new = normF < tol
+
+            return x_new, converged_new
+
+        x_new, converged_new = jax.lax.cond(converged,
+                                             lambda x: (x, True),
+                                             compute,
+                                             x)
         return (x_new, converged_new), None
 
     # initial state: x0 and not converged
