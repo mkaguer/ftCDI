@@ -663,7 +663,7 @@ CaV = jnp.where(net["pore.micropore"], C*a*V, 0.0)
 # time stepping
 t0 = 0
 dt = dt
-tf = 500
+tf = 2500
 t_save = jnp.arange(t0, tf + dt*5, dt*5)
 # store solution for first time!
 y = _np.concatenate((_np.array(c), _np.array(phi), _np.array(c_mi), _np.array(phi_d)))
@@ -682,42 +682,46 @@ for t in jnp.arange(t0+dt, tf+0.9*dt, dt):
     phi_old = phi0.copy()
     # define gummel convergence
     g_res = jnp.array([100.0, 100.0])
-    g_tol = jnp.array([1e-4, 1e-6])  # jnp.array([1e-6, 1e-6])
+    g_tol = jnp.array([1e-4, 1e-6])
     g_max_iter = 40
     w = 0.15
     a = 1.0
     for g_iter in range(g_max_iter):
         print(f"Gummel Iteration No. {g_iter+1}")
-        # update charge source, most recent c and phi
-        start = time.time()
-        phi_d, Rc = _update_charge_source(net, c, phi)
-        phi_d.block_until_ready()
-        stop = time.time()
-        # print(jnp.sum(jnp.abs(Rc["rate"][net["pore.micropore"]])))
-        # xx
-        print(f'Charge Source Time: {stop - start}s')
-        net["pore.donnan_potential"] = phi_d
-        net["pore.charge_source"] = Rc
         # build charge A and b
         start = time.time()
         Ac, bc = _get_charge_A_and_b(net)
         bc.block_until_ready()
         stop = time.time()
         print(f'Charge A and b Time: {stop - start}s')
-        # solve phi
-        start = time.time()
-        phi_new, info1 = charge_solve(phi0,
-                               phi,
-                               dt,
-                               args=(Ac, bc, CaV),
-                               tol=1e-8,
-                               atol=0.0,
-                               maxiter=100)
-        phi_new.block_until_ready()
-        stop = time.time()
-        print(f'Charge Solve Time: {stop - start}s')
-        # update potential with under-relaxation
-        phi = a * phi_new + (1 - a) * phi_old
+        # perform picard iterations, to solve phi
+        p = 0
+        p_max_iter = 5
+        while p < p_max_iter:
+            # increment iter counter p
+            p += 1
+            # update charge source, most recent c and phi
+            start = time.time()
+            phi_d, Rc = _update_charge_source(net, c, phi)
+            phi_d.block_until_ready()
+            stop = time.time()
+            print(f'Charge Source Time: {stop - start}s')
+            net["pore.donnan_potential"] = phi_d
+            net["pore.charge_source"] = Rc
+            # solve phi
+            start = time.time()
+            phi_new, info1 = charge_solve(phi0,
+                                   phi,
+                                   dt,
+                                   args=(Ac, bc, CaV),
+                                   tol=1e-8,
+                                   atol=0.0,
+                                   maxiter=100)
+            phi_new.block_until_ready()
+            stop = time.time()
+            print(f'Charge Solve Time: {stop - start}s')
+            # update potential with under-relaxation
+            phi = a * phi_new + (1 - a) * phi_old
         net["pore.potential"] = phi
         # update mass source, most recent c and phi
         start = time.time()
