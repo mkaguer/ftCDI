@@ -57,10 +57,24 @@ spacing = jnp.round(spacing, 10)
 # set pore thickness for perforated pores (i.e. cylinders)
 net["pore.thickness"] = spacing
 
-# add zeta parameter
-zeta = 0.1
-mask = net["throat.micropore"]
-net["throat.zeta"] = jnp.where(mask, zeta, 1.0)
+# set zeta
+zeta = 0
+
+if zeta == 0:
+    conns = net["throat.conns"][net["throat.micropore"]]
+    P1 = conns[:, 0]
+    P2 = conns[:, 1]
+    D = net["pore.diameter"]
+    L = jnp.sqrt((spacing/2)**2 + (spacing/2)**2)
+    temp = jnp.where(net["pore.macropore"][P1], D[P1]/2/L, D[P2]/2/L)
+    zeta = jnp.ones(Nt)
+    zeta = zeta.at[net["throat.micropore"]].set(temp)
+    net["throat.zeta"] = zeta
+else:  
+    # add zeta parameter
+    zeta = 0.05
+    mask = net["throat.micropore"]
+    net["throat.zeta"] = jnp.where(mask, zeta, 1.0)
 
 # add geometry models, this is important for zeta that may change!
 pnm.models.apply_models(net,
@@ -81,8 +95,8 @@ rho_sep = prpts.properties["rho_sep"]
 rho_mi = prpts.properties["rho_mi"]
 V_cell = prpts.properties["V_cell"]
 Ca = prpts.properties["Ca"]
-mu_att = 2.0  # prpts.properties["mu_att"]
-P_in = 3.1  # prpts.properties["P_in"]
+mu_att = 0.0  # prpts.properties["mu_att"]
+P_in = 3.0  # prpts.properties["P_in"]
 P_out = prpts.properties["P_out"]
 cf = prpts.properties["cf"]
 T = prpts.properties["T"]
@@ -702,8 +716,7 @@ for t in jnp.arange(t0+dt, tf+0.9*dt, dt):
         phi_new.block_until_ready()
         stop = time.time()
         print(f'Charge Solve Time: {stop - start}s')
-        # update potential
-        # phi_new = jnp.clip(phi_new, -V_cell/2, V_cell/2)
+        # update potential with under-relaxation
         phi = a * phi_new + (1 - a) * phi_old
         net["pore.potential"] = phi
         # update mass source, most recent c and phi
@@ -733,7 +746,7 @@ for t in jnp.arange(t0+dt, tf+0.9*dt, dt):
         c_new.block_until_ready()
         stop = time.time()
         print(f'Mass Solve Time: {stop - start}s')
-        c_new = jnp.clip(c_new, 1e-6, cf)
+        c_new = jnp.clip(c_new, 0.0, cf)
         c = w * c_new + (1 - w) * c_old
         net["pore.concentration"] = c
         # update charge conductance
@@ -807,22 +820,24 @@ c_mi = net["pore.micro_concentration"][net["pore.micropore"]]/2 - cf*jnp.exp(mu_
 print(f'Total Salt Captured 2: {jnp.sum(c_mi*V_mi)} moles of salt')
 
 # plot discharge
-plt.figure(1)
+plt.figure(1, dpi=500)
 c_out = _np.average(y[:, 0:Np][:, net["pore.outlet"]], axis=1)
 plt.plot(x, c_out, label="outlet")
 plt.legend(frameon=True)
 plt.title("Discharge Curve", fontweight="bold")
 plt.xlabel("Time (s)")
 plt.ylabel("Concentration (mM)")
+plt.savefig("../figures/discharge-curve-jax")
 
 # plot current
-plt.figure(2)
+plt.figure(2, dpi=500)
 plt.plot(x[1:], _np.array(I)*f*1e3, label="Discharge")
 # plt.ylim([0, 4])
 plt.legend(frameon=True)
 plt.title("Discharge Curve", fontweight="bold")
 plt.xlabel("Time (s)")
 plt.ylabel("Current (mA)")
+plt.savefig("../figures/current-curve-jax")
 
 # save
 _np.save("data/y" + "_" + str(mu_att) + "_" + str(zeta) + "_" + str(tf) + "s.npy", y)
