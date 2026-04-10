@@ -94,9 +94,9 @@ pnm.models.apply_models(net,
 rho_sep = prpts.properties["rho_sep"]
 rho_mi = prpts.properties["rho_mi"]
 V_cell = prpts.properties["V_cell"]
-Ca = prpts.properties["Ca"]
+Ca = 70 * 1e6  # prpts.properties["Ca"]
 mu_att = 0.0  # prpts.properties["mu_att"]
-P_in = 3.0  # prpts.properties["P_in"]
+P_in = 6.0  # prpts.properties["P_in"]
 P_out = prpts.properties["P_out"]
 cf = prpts.properties["cf"]
 T = prpts.properties["T"]
@@ -663,7 +663,7 @@ CaV = jnp.where(net["pore.micropore"], C*a*V, 0.0)
 # time stepping
 t0 = 0
 dt = dt
-tf = 2500
+tf = 1800
 t_save = jnp.arange(t0, tf + dt*5, dt*5)
 # store solution for first time!
 y = _np.concatenate((_np.array(c), _np.array(phi), _np.array(c_mi), _np.array(phi_d)))
@@ -750,7 +750,7 @@ for t in jnp.arange(t0+dt, tf+0.9*dt, dt):
         c_new.block_until_ready()
         stop = time.time()
         print(f'Mass Solve Time: {stop - start}s')
-        c_new = jnp.clip(c_new, 0.0, cf)
+        c_new = jnp.clip(c_new, 1e-6, cf)
         c = w * c_new + (1 - w) * c_old
         net["pore.concentration"] = c
         # update charge conductance
