@@ -21,9 +21,9 @@ else:
 
 # load network
 if test:
-    data = np.load('../networks/scale_network_1a_test.npz')
+    data = np.load('../networks/scale_network_test.npz')
 else:
-    data = np.load('../networks/scale_network_1a.npz')
+    data = np.load('../networks/scale_network.npz')
 data = {key: np.array(data[key]) for key in data.files}
 
 # retrieve diameters
