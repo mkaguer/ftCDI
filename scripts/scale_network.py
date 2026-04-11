@@ -587,7 +587,7 @@ net_stitch["pore.invasion_sequence"] = alg_stitch["pore.invasion_sequence"]
 net_stitch["throat.invasion_sequence"] = alg_stitch["throat.invasion_sequence"]
 net_stitch["throat.radius"] = net_stitch["throat.diameter"]/2
 op.io.project_to_xdmf(project=net_stitch.project,
-                      filename="../paraview/scale_network_1a")
+                      filename="../paraview/scale_network")
 
 # export to .npz file
-np.savez_compressed("../networks/scale_network_1a.npz", **net_stitch)
+np.savez_compressed("../networks/scale_network.npz", **net_stitch)
