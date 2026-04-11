@@ -405,7 +405,7 @@ def stitch_network(network, shape, spacing, ns):
     
     return network
 
-ns = [7, 7, 3]
+ns = [3, 7, 7]
 net_stitch = stitch_network(net_s, shape_s, spacing, ns)
 
 # FIXME: use tsf_kde = 1 (more accurate results)
@@ -590,4 +590,4 @@ op.io.project_to_xdmf(project=net_stitch.project,
                       filename="../paraview/scale_network_1a")
 
 # export to .npz file
-np.savez_compressed("../networks/scale_network_1a.npz", **net_s)
+np.savez_compressed("../networks/scale_network_1a.npz", **net_stitch)

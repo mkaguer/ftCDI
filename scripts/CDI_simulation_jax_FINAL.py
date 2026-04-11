@@ -67,12 +67,11 @@ if zeta == 0:
     D = net["pore.diameter"]
     L = jnp.sqrt((spacing/2)**2 + (spacing/2)**2)
     temp = jnp.where(net["pore.macropore"][P1], D[P1]/2/L, D[P2]/2/L)
-    zeta = jnp.ones(Nt)
-    zeta = zeta.at[net["throat.micropore"]].set(temp)
-    net["throat.zeta"] = zeta
+    zetas = jnp.ones(Nt)
+    zetas = zetas.at[net["throat.micropore"]].set(temp)
+    net["throat.zeta"] = zetas
 else:  
     # add zeta parameter
-    zeta = 0.05
     mask = net["throat.micropore"]
     net["throat.zeta"] = jnp.where(mask, zeta, 1.0)
 
@@ -94,7 +93,7 @@ pnm.models.apply_models(net,
 rho_sep = prpts.properties["rho_sep"]
 rho_mi = prpts.properties["rho_mi"]
 V_cell = prpts.properties["V_cell"]
-Ca = 70 * 1e6  # prpts.properties["Ca"]
+Ca = 140 * 1e6  # prpts.properties["Ca"]
 mu_att = 0.0  # prpts.properties["mu_att"]
 P_in = 6.0  # prpts.properties["P_in"]
 P_out = prpts.properties["P_out"]
@@ -170,7 +169,7 @@ net["pore.capacitance"] = jnp.where(net["pore.micropore"], Ca, 1.0)
 net["pore.surface_area"] = jnp.ones(Np)*1
 
 # select time step
-dt = 0.5
+dt = 1.0
 net["time_step"] = dt
 
 # set iniital guess for donnan potential
@@ -682,34 +681,34 @@ for t in jnp.arange(t0+dt, tf+0.9*dt, dt):
     phi_old = phi0.copy()
     # define gummel convergence
     g_res = jnp.array([100.0, 100.0])
-    g_tol = jnp.array([1e-4, 1e-6])
-    g_max_iter = 40
+    g_tol = jnp.array([1e-3, 1e-5])
+    g_max_iter = 50
     w = 0.15
     a = 1.0
     for g_iter in range(g_max_iter):
         print(f"Gummel Iteration No. {g_iter+1}")
-        # build charge A and b
-        start = time.time()
-        Ac, bc = _get_charge_A_and_b(net)
-        bc.block_until_ready()
-        stop = time.time()
-        print(f'Charge A and b Time: {stop - start}s')
         # perform picard iterations, to solve phi
         p = 0
-        p_max_iter = 5
+        p_max_iter = 10
         while p < p_max_iter:
             # increment iter counter p
             p += 1
             # update charge source, most recent c and phi
-            start = time.time()
+            # start = time.time()
             phi_d, Rc = _update_charge_source(net, c, phi)
-            phi_d.block_until_ready()
-            stop = time.time()
-            print(f'Charge Source Time: {stop - start}s')
+            # phi_d.block_until_ready()
+            # stop = time.time()
+            # print(f'Charge Source Time: {stop - start}s')
             net["pore.donnan_potential"] = phi_d
             net["pore.charge_source"] = Rc
+            # build charge A and b
+            # start = time.time()
+            Ac, bc = _get_charge_A_and_b(net)
+            # bc.block_until_ready()
+            # stop = time.time()
+            # print(f'Charge A and b Time: {stop - start}s')
             # solve phi
-            start = time.time()
+            # start = time.time()
             phi_new, info1 = charge_solve(phi0,
                                    phi,
                                    dt,
@@ -717,29 +716,29 @@ for t in jnp.arange(t0+dt, tf+0.9*dt, dt):
                                    tol=1e-8,
                                    atol=0.0,
                                    maxiter=100)
-            phi_new.block_until_ready()
-            stop = time.time()
-            print(f'Charge Solve Time: {stop - start}s')
+            # phi_new.block_until_ready()
+            # stop = time.time()
+            # print(f'Charge Solve Time: {stop - start}s')
             # update potential with under-relaxation
             phi = a * phi_new + (1 - a) * phi_old
         net["pore.potential"] = phi
         # update mass source, most recent c and phi
-        start = time.time()
+        # start = time.time()
         phi_d, c_mi, Rm = _update_mass_source(net, c, phi)
-        phi_d.block_until_ready()
-        stop = time.time()
-        print(f'Mass Source Time: {stop - start}s')
+        # phi_d.block_until_ready()
+        # stop = time.time()
+        # print(f'Mass Source Time: {stop - start}s')
         net["pore.donnan_potential"] = phi_d
         net["pore.micro_concentration"] = c_mi
         net["pore.mass_source"] = Rm
         # build mass A and b
-        start = time.time()
+        # start = time.time()
         Am, bm = _get_mass_A_and_b(net, cf)
-        Am.block_until_ready()
-        stop = time.time()
-        print(f'Mass A and b Time: {stop - start}s')
+        # Am.block_until_ready()
+        # stop = time.time()
+        # print(f'Mass A and b Time: {stop - start}s')
         # solve c
-        start = time.time()
+        # start = time.time()
         c_new, info2 = mass_solve(c0,
                            c,
                            dt,
@@ -747,18 +746,18 @@ for t in jnp.arange(t0+dt, tf+0.9*dt, dt):
                            tol=1e-8,
                            atol=0.0,
                            maxiter=100)
-        c_new.block_until_ready()
-        stop = time.time()
-        print(f'Mass Solve Time: {stop - start}s')
-        c_new = jnp.clip(c_new, 1e-6, cf)
+        # c_new.block_until_ready()
+        # stop = time.time()
+        # print(f'Mass Solve Time: {stop - start}s')
+        c_new = jnp.clip(c_new, 0.0, jnp.inf)
         c = w * c_new + (1 - w) * c_old
         net["pore.concentration"] = c
         # update charge conductance
-        start = time.time()
-        K = _update_charge_conductance(net, c)
-        K.block_until_ready()
-        stop = time.time()
-        print(f'Update K Time: {stop - start}s')
+        # start = time.time()
+        K = _update_charge_conductance(net, c + 1e-4)
+        # K.block_until_ready()
+        # stop = time.time()
+        # print(f'Update K Time: {stop - start}s')
         net["throat.ionic_conductance"] = K
         # calculate new residual
         if g_iter > 0:
@@ -844,6 +843,6 @@ plt.ylabel("Current (mA)")
 plt.savefig("../figures/current-curve-jax")
 
 # save
-_np.save("data/y" + "_" + str(mu_att) + "_" + str(zeta) + "_" + str(tf) + "s.npy", y)
-_np.save("data/x" + "_" + str(mu_att) + "_" + str(zeta) + "_" + str(tf) + "s.npy", x)
-_np.save("data/I" + "_" + str(mu_att) + "_" + str(zeta) + "_" + str(tf) + "s.npy", _np.array(I)*f*1e3)
+_np.save("../data/y" + "_" + str(mu_att) + "_" + str(zeta) + "_" + str(tf) + "s.npy", y)
+_np.save("../data/x" + "_" + str(mu_att) + "_" + str(zeta) + "_" + str(tf) + "s.npy", x)
+_np.save("../data/I" + "_" + str(mu_att) + "_" + str(zeta) + "_" + str(tf) + "s.npy", _np.array(I)*f*1e3)

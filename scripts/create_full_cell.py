@@ -2,9 +2,6 @@ import numpy as np
 import openpnm as op
 import network
 
-
-
-
 test = False
 
 # set dimensions

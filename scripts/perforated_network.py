@@ -9,14 +9,14 @@ import openpnm as op
 import numpy as np
 import network
 
-test = True
+test = False
 
 # set dimensions
 if test:
     length = 4e-5
     d = 3e-5
 else:
-    length = 3e-4
+    length = 3e-4  # already sliced
     d = 2e-4
 
 # load network
@@ -33,6 +33,16 @@ Dt = data["throat.diameter"]
 # get coords and conns
 conns = data["throat.conns"]
 coords = data["pore.coords"]
+
+# assign new pore indices b/c of stitching
+perm = np.lexsort((coords[:, 2], coords[:, 1], coords[:, 0]))
+inv_perm = np.empty_like(perm)
+inv_perm[perm] = np.arange(len(perm))  # maps old indices
+coords = coords[perm]
+conns = inv_perm[conns]
+
+# re-order Dp, Dt already getting re-ordered
+Dp = Dp[perm]
 
 # get spacing
 spacing = np.max(np.abs(coords[conns[0, 0]] - coords[conns[0, 1]]))
@@ -51,18 +61,25 @@ net = network.my_bcc(shape, spacing)
 net["pore.diameter@macropore"] = Dp
 net["pore.diameter@micropore"] = 1e-16  # can't be 1e-32!
 
-# get throat indices for reordering!
-idx = np.where((net["throat.conns@macropore"][:, None] == conns).all(-1))[1]
+# Get indices for assigning throat diameters
+mapping = {tuple(row): i for i, row in enumerate(conns)}
+idx = np.array([mapping[tuple(row)] for row in net["throat.conns@macropore"]])
 
 # assign throat diameters
 net["throat.diameter@macropore"] = Dt[idx]
 D = net["pore.diameter"]
 throat_conns = net["throat.conns@micropore"]
-net["throat.diameter@micropore"] = np.sqrt((1/2*spacing)**2 + (1/2*spacing)**2)
-# net["throat.diameter@micropore"] = 1.0 * np.max(D[throat_conns], axis=1)
+D_ma = np.where(net["pore.macropore"][throat_conns[:, 0]],
+                net["pore.diameter"][throat_conns[:, 0]],
+                net["pore.diameter"][throat_conns[:, 1]])
+net["throat.diameter@micropore"] = D_ma
+# net["throat.diameter@micropore"] = np.sqrt((1/2*spacing)**2 + (1/2*spacing)**2)
 
 # slice network
-net = network.slice_network(net, length=length, axis=0)
+if test:
+    net = network.slice_network(net, length=length, axis=0)
+else:
+    pass
 
 # cut hole
 net = network.cut_hole(net, d=d, axis=0)
