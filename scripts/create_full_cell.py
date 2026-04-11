@@ -14,9 +14,9 @@ else:
 
 # load network
 if test:
-    data = np.load('../networks/perforated_network_1a_test.npz')
+    data = np.load("../networks/perforated_network_test" + f"_{d}" + ".npz")
 else:
-    data = np.load('../networks/perforated_network_1a.npz')
+    data = np.load('../networks/perforated_network' + f"_{d}" + ".npz")
 data = {key: np.array(data[key]) for key in data.files}
 
 # convert to openpnm object
@@ -58,14 +58,14 @@ net["throat.macropore"][throats] = False
 # export to paraview
 if test:
     op.io.project_to_xdmf(project=net.project,
-                          filename="../paraview/create_full_cell_1a_test")
+                          filename="../paraview/create_full_cell_test" + f"_{d}")
 else:
     op.io.project_to_xdmf(project=net.project,
-                          filename="../paraview/create_full_cell_1a")
+                          filename="../paraview/create_full_cell" + f"_{d}")
 
 if test:
     # export to .npz file
-    np.savez_compressed("../networks/create_full_cell_1a_test.npz", **net)
+    np.savez_compressed("../networks/create_full_cell_test" + f"_{d}" + ".npz", **net)
 else:
     # export to .npz file
-    np.savez_compressed("../networks/create_full_cell_1a.npz", **net)
+    np.savez_compressed("../networks/create_full_cell" + f"_{d}" + ".npz", **net)

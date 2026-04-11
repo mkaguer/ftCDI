@@ -95,13 +95,13 @@ network["throat.diameter@perforated"] = 1.0 * np.min(D[throat_conns], axis=1)
 network["throat.radius"] = network["throat.diameter"]/2
 if test:
     op.io.project_to_xdmf(project=net.project,
-                          filename="../paraview/perforated_network_1a_test")
+                          filename="../paraview/perforated_network_test" + f"_{d}")
 else:
     op.io.project_to_xdmf(project=net.project,
-                          filename="../paraview/perforated_network_1a")
+                          filename="../paraview/perforated_network" + f"_{d}")
 
 # export to .npz file
 if test:
-    np.savez_compressed("../networks/perforated_network_1a_test.npz", **net)
+    np.savez_compressed("../networks/perforated_network_test" + f"_{d}" + ".npz", **net)
 else:
-    np.savez_compressed("../networks/perforated_network_1a.npz", **net)
+    np.savez_compressed("../networks/perforated_network" + f"_{d}" + ".npz", **net)
