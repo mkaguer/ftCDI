@@ -24,8 +24,11 @@ config.update("jax_enable_x64", True)
 # create blank project dict
 proj = {}
 
+# set d
+d = 2e-4
+
 # import network (full cell with labels)
-data = _np.load('../networks/create_full_cell_1a.npz')
+data = _np.load('../networks/create_full_cell' + f"_{d}" + ".npz")
 data = {key: _np.array(data[key]) for key in data.files}
 
 # convert to jax
@@ -689,8 +692,9 @@ for t in jnp.arange(t0+dt, tf+0.9*dt, dt):
         print(f"Gummel Iteration No. {g_iter+1}")
         # perform picard iterations, to solve phi
         p = 0
-        p_max_iter = 10
-        while p < p_max_iter:
+        p_max_iter = 25
+        p_res = 100.0
+        while p_res > 1e-12 and p < p_max_iter:
             # increment iter counter p
             p += 1
             # update charge source, most recent c and phi
@@ -719,6 +723,9 @@ for t in jnp.arange(t0+dt, tf+0.9*dt, dt):
             # phi_new.block_until_ready()
             # stop = time.time()
             # print(f'Charge Solve Time: {stop - start}s')
+            # calculate p_res
+            p_res = jnp.sum((phi_new - phi)**2)
+            # print(p_res)
             # update potential with under-relaxation
             phi = a * phi_new + (1 - a) * phi_old
         net["pore.potential"] = phi
@@ -754,7 +761,7 @@ for t in jnp.arange(t0+dt, tf+0.9*dt, dt):
         net["pore.concentration"] = c
         # update charge conductance
         # start = time.time()
-        K = _update_charge_conductance(net, c + 1e-4)
+        K = _update_charge_conductance(net, c + 1e-3)  # avoid zero conductivity
         # K.block_until_ready()
         # stop = time.time()
         # print(f'Update K Time: {stop - start}s')
@@ -843,6 +850,6 @@ plt.ylabel("Current (mA)")
 plt.savefig("../figures/current-curve-jax")
 
 # save
-_np.save("../data/y" + "_" + str(mu_att) + "_" + str(zeta) + "_" + str(tf) + "s.npy", y)
-_np.save("../data/x" + "_" + str(mu_att) + "_" + str(zeta) + "_" + str(tf) + "s.npy", x)
-_np.save("../data/I" + "_" + str(mu_att) + "_" + str(zeta) + "_" + str(tf) + "s.npy", _np.array(I)*f*1e3)
+_np.save("../data/y" + "_" + str(d) + "_" + str(zeta) + "_" + str(tf) + "s.npy", y)
+_np.save("../data/x" + "_" + str(d) + "_" + str(zeta) + "_" + str(tf) + "s.npy", x)
+_np.save("../data/I" + "_" + str(d) + "_" + str(zeta) + "_" + str(tf) + "s.npy", _np.array(I)*f*1e3)
