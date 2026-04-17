@@ -6,12 +6,12 @@ from scipy.integrate import solve_ivp
 op.visualization.set_mpl_style()
 
 # get filenames
-Ca = 35
+Ca = 140
 zeta = 0
-mu_att = 0.0
-tf = 2500
-y_filename = "data/y" + "_" + str(mu_att) + "_" + str(zeta) + "_" + str(tf) + "s"
-x_filename = "data/x" + "_" + str(mu_att) + "_" + str(zeta) + "_" + str(tf) + "s"
+d = 0.0002
+tf = 1800
+y_filename = "../data/y" + "_" + str(d) + "_" + str(zeta) + "_" + str(tf) + "s"
+x_filename = "../data/x" + "_" + str(d) + "_" + str(zeta) + "_" + str(tf) + "s"
 
 # load simulated data dict
 y = np.load(y_filename + ".npy")
@@ -53,5 +53,5 @@ plt.legend(frameon=True)
 plt.title("Discharge Curve", fontweight="bold")
 plt.xlabel("Time (s)", fontsize=14)
 plt.ylabel("Concentration (mM)", fontsize=14)
-plt.savefig("../figures/discharge_" + str(mu_att) + "_" + str(zeta) + ".png", dpi=500)
+plt.savefig("../figures/discharge_" + str(d) + "_" + str(zeta) + ".png", dpi=500)
 plt.show()
