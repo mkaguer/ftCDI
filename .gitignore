@@ -11,6 +11,7 @@
 /networks/*
 /data/*
 /paraview/*
+/movies/*
 scripts/__pycache__
 scripts/mypnmlib/models/__pycache__
 scripts/mypnmlib/models/__pycache__
