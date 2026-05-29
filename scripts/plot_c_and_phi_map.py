@@ -1,6 +1,5 @@
 import numpy as np
 import openpnm as op
-from scipy.interpolate import griddata
 import matplotlib.pyplot as plt
 
 op.visualization.set_mpl_style()
@@ -41,7 +40,7 @@ spacing = np.round(spacing, 10)
 x_sl = 64  # up to 78
 
 # choose time
-t = 100  # 1, 2, 10, 50, 100, 200, 300, 360
+t = 360  # 1, 2, 10, 50, 100, 200, 300, 360
 
 
 #%% plot concentration
@@ -194,7 +193,7 @@ plt.show()
 #%% plot donnan potential
 
 # get phi @ t
-phi_d = phi_d[t, :]
+phi_d_t = phi_d[t, :]
 
 # get x, y, and z coords
 x_coords = coords[:, 0]
@@ -207,7 +206,7 @@ slicce = np.isclose(x_coords, spacing * x_sl)
 # slice data
 y = y_coords[slicce]
 z = z_coords[slicce]
-phi_d_slice = phi_d[slicce]
+phi_d_slice = phi_d_t[slicce]
 
 # grid axes
 y_unique = np.unique(y)
@@ -219,7 +218,7 @@ micro = net["pore.micropore"][slicce]
 # ---- scatter ----
 plt.figure(4, dpi=500)
 sc1 = plt.scatter(z[micro], y[micro], c=phi_d_slice[micro],
-                  cmap='plasma', s=10, vmin=0.0, vmax=V_cell/2)
+                  cmap='plasma', s=10, vmin=0.0, vmax=np.max(phi_d))
 '''
 sc1 = plt.scatter(z[micro], y[micro], c=phi_d_slice[micro],
                   cmap='plasma', s=10, vmin=np.min(phi_d_slice[micro]), vmax=np.max(phi_d_slice[micro]))
