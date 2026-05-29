@@ -127,7 +127,7 @@ ax.axis("off")
 # ---- Donnan potential ----
 ax = axes[1, 1]
 sc6 = ax.scatter(z_mi[micro], y_mi[micro], c=phi_d_slice[micro],
-                 cmap="plasma", s=20, vmin=0, vmax=V_cell/2)
+                 cmap="plasma", s=20, vmin=0, vmax=np.max(phi_d))
 
 cbar = fig.colorbar(sc6, ax=ax)
 cbar.ax.tick_params(labelsize=16)
